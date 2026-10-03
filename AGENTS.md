@@ -464,4 +464,15 @@ Build incrementally in this general order:
 9. End-to-end deployment/testing.
 10. Spreadsheet presentation improvements.
 
+## Project Decisions
+
+Significant architectural or behavioral decisions that are not obvious
+from the code should be recorded in `docs/DECISIONS.md`.
+
+Keep this file concise. Do not log routine implementation choices or
+turn it into a development diary.
+
+When implementing a change that contradicts an existing decision,
+raise the conflict before changing the code.
+
 Do not skip ahead unless explicitly asked.

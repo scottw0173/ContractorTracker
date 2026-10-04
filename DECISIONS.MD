@@ -183,3 +183,12 @@ The authoritative DynamoDB table uses Retain for deletion and replacement.
 Function roles receive only their current table operations and standard Lambda
 logging. SES SendEmail is limited to the configured verified sender identity.
 The initial SES recipient defaults to the mailbox simulator, not a real inbox.
+
+
+## 2026-10-03 — Google Sheets authorization boundary
+
+Use service-account credentials decrypted from the configured SSM parameter,
+with only the spreadsheets read/write OAuth scope and no Drive scope. The
+spreadsheet ID selects the existing target; it does not restrict OAuth access.
+Google sharing permissions must grant the service account access to that file.
+Client construction is offline; token acquisition occurs lazily on API use.

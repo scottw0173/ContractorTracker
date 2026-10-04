@@ -385,6 +385,13 @@ The reporting layer can interpret weekend and weekday non-responses differently 
 
 Google Sheets is a reporting projection, not the database.
 
+internal/sheets provides credential loading and client construction only.
+GOOGLE_CREDENTIALS_PARAMETER and GOOGLE_SPREADSHEET_ID select the SSM parameter
+and existing target. Credentials are decrypted from Parameter Store and used
+for service-account authentication with the Sheets read/write scope, without
+Drive access or default credential discovery. No spreadsheet synchronization,
+worksheet setup, or Lambda integration is implemented by this plumbing.
+
 DynamoDB must remain authoritative.
 
 Initial intent:

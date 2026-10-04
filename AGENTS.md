@@ -400,7 +400,8 @@ A weekend `NO_RESPONSE` remains a `NO_RESPONSE`.
 
 Do not automatically turn weekend non-responses into `TIME_OFF`.
 
-The reporting layer can interpret weekend and weekday non-responses differently later.
+Summary counts all current NO_RESPONSE records equally; weekend context does
+not change reporting classifications.
 
 ---
 
@@ -428,7 +429,7 @@ covers A1:K370 (including its colors), and auto-sizes A:K after each successful
 row upsert. Missing banding is added with subdued defaults; yearly color schemes
 need not match. Partial overlapping bands that do not cover A1:K370 require
 manual adjustment and return an error instead of adding overlapping formatting.
-Presentation is not business state, and Summary formatting is untouched.
+Presentation is not business state; Summary has a separate reporting layout.
 
 cmd/sheet-sync validates the positive year and exact matching ISO date before
 using the existing strongly consistent GetDay. It loads credentials and creates
@@ -444,25 +445,35 @@ Errors fail the whole batch; no partial-batch response or custom retry is used.
 No reserved concurrency is configured because this account rejected it under
 its concurrency quota. Default shard ordering is not a global Sheets writer
 lock; concurrent shards/manual invocations can race on tab creation or append.
-No replacement lock, Summary formulas, or full-year sync exists.
+No replacement lock or full-year sync exists.
 
-DynamoDB must remain authoritative.
+Summary is a formula-driven dashboard for one selected calendar year, not an
+audit log. B3 lists available exact positive four-digit Daily Log YYYY years in
+ascending order. Preserve a valid selection; blank/invalid defaults to newest.
+A newly created annual tab becomes selected once in the same atomic Google
+batch as creation and dropdown validation; later upserts preserve past years. Current record state drives every total. All NO_RESPONSE
+statuses count equally; no weekend or historical-finalization filtering occurs.
+PTO Used sums PTO Fraction without assuming entitlement or PTO remaining.
 
-Initial intent:
+Summary layout: title A1; Reporting Year A3:B3; Records Through D3:E3; Today's
+Status A4:B4; six headline metrics A6:F7; monthly table A11:G24 beneath A10;
+PTO title A27, overflow warning D27, and Date/Day list A28:B43. The monthly
+breakdown replaces weekly averages and has January–December plus TOTAL, with
+Month, Work Eq., Full, Half, PTO, Time Off, No Response only. PTO lists sorted
+current PTO dates within the expected annual 15-day display capacity; overflow
+is explicit and does not truncate totals or Daily Log data.
 
-- Read the relevant DynamoDB records.
-- Sort them chronologically.
-- Synchronize the worksheet deterministically.
+Summary formulas dynamically reference B3 and operate on RAW ISO date strings.
+Records Through is the maximum logical date, not the last physical row. Today's
+Status uses Sheets TODAY() for the selected current year only; the spreadsheet
+timezone governs that reporting display. No Summary data becomes business state.
 
-Avoid designing the system around blind spreadsheet row appends.
-
-A later spreadsheet may contain:
-
-- a raw daily-record view;
-- a simplified time-off view;
-- formulas or summaries.
-
-Do not build advanced spreadsheet reporting until explicitly requested.
+After successful per-date upserts, initialize blank required Summary labels and
+formulas, maintain dropdown values, and apply basic presentation with narrow
+field updates. Inspect entered content rather than calculated formula results;
+incompatible nonblank owned cells fail explicitly. Valid B3 is user-controlled.
+Preserve unrelated cells and avoid duplicate rules or formatting. Summary must
+already exist; do not recreate it, add charts, or reconcile a full year.
 
 ---
 

@@ -75,11 +75,12 @@ covers A1:K370 (including its colors), and auto-sizes A:K after each successful
 row upsert. Missing banding is added with subdued defaults; yearly color schemes
 need not match. Partial overlapping bands that do not cover A1:K370 require
 manual adjustment and return an error instead of adding overlapping formatting.
-Presentation is not business state, and Summary formatting is untouched.
+Presentation is not business state; Summary has its own dashboard presentation.
 
 Blank headers are initialized; nonblank mismatches and duplicate dates fail.
-Repeated invocation updates the same row. Unrelated rows and Summary are not
-rewritten; there is no sorting, full-year reconciliation, or Summary formula setup.
+Repeated invocation updates the same row. Unrelated Daily Log rows are not
+rewritten; there is no sorting or full-year reconciliation. Successful upserts
+also maintain the Summary dashboard described below.
 DynamoDB remains authoritative. The stream starts at TRIM_HORIZON with batch
 size 10 and default per-shard parallelization. An error fails the whole batch
 for default Lambda retry; there is no partial-batch response or custom retry.
@@ -115,6 +116,62 @@ cat /tmp/contractortracker-sheet-sync-result.json
 
 Success returns `null`; check that the CLI response has no `FunctionError`.
 Invoking again should update the same date row rather than append another.
+
+## Summary dashboard
+
+Summary shows one selected calendar year. B3 is a strict dropdown of existing
+`Daily Log YYYY` tabs, sorted ascending. Blank/invalid selections default to
+the newest year. Tab creation, year selection, and its dropdown update share
+one atomic Google batch, so a later projection failure cannot lose the once-only
+year switch. Ordinary later upserts preserve a valid manually selected past year. No DynamoDB queries are
+performed for Summary calculations.
+
+The application-owned layout is:
+
+| Cells | Content |
+| --- | --- |
+| A1 | Contractor Summary title |
+| A3:B3 | Reporting Year label and dropdown |
+| D3:E3 | Records Through label and latest logical date |
+| A4:B4 | Today's Status label and current-year-only status |
+| A6:F7 | Workday Equivalent, Full Days, Half Days, PTO Used, No Responses, Corrections |
+| A10 | Monthly Breakdown title |
+| A11:G24 | Month, Work Eq., Full, Half, PTO, Time Off, No Response; January–December and TOTAL |
+| A27, D27 | PTO Days title and visible overflow warning when necessary |
+| A28:B43 | Date/Day headers and 15 sorted PTO date rows |
+
+All totals describe current record state. A late Full Day contributes work and
+Full Days, not No Responses; historical response/finalization metadata is not
+aggregated. All NO_RESPONSE statuses count equally, including weekends. Work
+Eq. sums Work Fraction, PTO Used sums PTO Fraction with no assumed entitlement
+or remaining allowance, and Corrections counts Changed=true as descriptive
+application metadata rather than an audit log. The monthly breakdown replaces
+weekly averages. ISO month-prefix formulas operate on RAW text dates.
+
+The PTO list uses current PTO records in chronological order, with the expected
+annual 15-day capacity as display space only. More than 15 records produces a
+visible warning directing the viewer to the selected Daily Log for all dates;
+underlying records and PTO Used are never truncated. Records Through uses the
+maximum logical date, independent of row order. Today's Status uses Sheets
+TODAY(); verify the spreadsheet timezone matches the application's timezone.
+
+Only blank required cells are initialized. Compatible formulas/labels remain
+unchanged, valid B3 selections are user-controlled, and incompatible nonblank
+content returns an error naming its cell. Unrelated cells are not overwritten.
+Formatting and year validation use narrow, repeat-safe updates. Summary updates
+follow a successful Daily Log write: a Summary failure does not undo that row,
+and manual invocation or stream retry can finish dashboard initialization.
+
+For a safe first live test, save a copy of the existing workbook and inspect the
+owned cells above for incompatible content before deploying. Invoke SheetSync
+with an existing 2026 DynamoDB date using the command above. Confirm no
+FunctionError, B3=2026, correct formula results (no formula errors), current-date
+status, monthly totals, and sorted PTO dates. Compare headline sums/counts with
+Daily Log 2026, including weekend and late-response records if present. Invoke
+the same date again to verify no duplicate Daily Log row or dashboard content.
+If another annual tab already exists, select 2026 and repeat an ordinary upsert
+for the other year to verify the selection remains 2026. No synthetic business
+records are needed for this test.
 
 ## Administrative corrections
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/scottw0173/ContractorTracker/internal/tracker"
@@ -12,7 +14,7 @@ import (
 
 var dailyHeaders = []interface{}{"Date", "Day", "Status", "Work Fraction", "PTO Fraction", "Weekend", "Email Sent At", "Responded At", "Response Source", "Finalized At", "Changed"}
 
-func yearlyWorksheet(year int) string { return fmt.Sprintf("Daily Log %d", year) }
+func yearlyWorksheet(year int) string { return fmt.Sprintf("Daily Log %04d", year) }
 
 func projectionValues(record tracker.DayRecord) ([]interface{}, error) {
 	date, err := time.Parse(time.DateOnly, record.Date)
@@ -82,7 +84,10 @@ func (c *Client) UpsertDay(ctx context.Context, record tracker.DayRecord) error 
 	if err != nil {
 		return fmt.Errorf("upsert %s in %s: %w", record.Date, title, err)
 	}
-	return c.autoResizeColumns(ctx, sheet.Properties.SheetId)
+	if err := c.autoResizeColumns(ctx, sheet.Properties.SheetId); err != nil {
+		return err
+	}
+	return c.ensureSummary(ctx)
 }
 
 func (c *Client) ensureYearlyWorksheet(ctx context.Context, title string) (*googlesheets.Sheet, error) {
@@ -96,13 +101,25 @@ func (c *Client) ensureYearlyWorksheet(ctx context.Context, title string) (*goog
 	if sheet := worksheets[title]; sheet != nil {
 		return sheet, nil
 	}
+	// Selecting the new year in the same atomic batch as tab creation makes
+	// the once-only switch survive failures later in UpsertDay or lost responses.
+	// Only the user-controlled selection and its dropdown change here; owned
+	// labels/formulas are checked and initialized after the row is projected.
+	year := strings.TrimPrefix(title, "Daily Log ")
+	years := append(reportingYears(worksheets), year)
+	sort.Strings(years)
+	summaryID := worksheets["Summary"].Properties.SheetId
 	out, err := c.Service.Spreadsheets.BatchUpdate(c.SpreadsheetID, &googlesheets.BatchUpdateSpreadsheetRequest{
-		Requests: []*googlesheets.Request{{AddSheet: &googlesheets.AddSheetRequest{Properties: &googlesheets.SheetProperties{Title: title}}}},
+		Requests: []*googlesheets.Request{
+			{AddSheet: &googlesheets.AddSheetRequest{Properties: &googlesheets.SheetProperties{Title: title}}},
+			summaryCellUpdate(summaryID, summaryCell{row: 2, col: 1}, "userEnteredValue", &googlesheets.CellData{UserEnteredValue: &googlesheets.ExtendedValue{StringValue: &year}}),
+			reportingYearValidationUpdate(summaryID, reportingYearValidation(years)),
+		},
 	}).Fields("replies.addSheet.properties").Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", title, err)
 	}
-	if len(out.Replies) != 1 || out.Replies[0] == nil || out.Replies[0].AddSheet == nil || out.Replies[0].AddSheet.Properties == nil {
+	if len(out.Replies) == 0 || out.Replies[0] == nil || out.Replies[0].AddSheet == nil || out.Replies[0].AddSheet.Properties == nil {
 		return nil, fmt.Errorf("create %s: missing worksheet properties in response", title)
 	}
 	return &googlesheets.Sheet{Properties: out.Replies[0].AddSheet.Properties}, nil

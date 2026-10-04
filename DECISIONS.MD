@@ -210,7 +210,7 @@ under the concurrency quota. No replacement reservation or lock is introduced.
 Default stream shard ordering does not serialize all Sheets writers: different
 shards, manual invocations, or external writers can race on tab creation/append
 or project an older read snapshot after a newer one. Manual repair remains
-available. No Summary formulas are implemented.
+available. Summary is a separate formula-driven selected-year presentation.
 
 SSM credentials are loaded on each invocation and the Google client retains
 only that invocation's context, avoiding expired contexts during token refresh.
@@ -266,10 +266,40 @@ and A:K auto-sized after successful row writes. Existing covering bands,
 including larger ranges and their colors, remain untouched; yearly tabs need
 not share a palette. Missing banding uses subdued defaults. A partial overlapping
 band returns an error for manual adjustment rather than modifying existing
-formatting or introducing another overlapping band. Summary is unaffected.
+formatting or introducing another overlapping band. Yearly presentation does
+not style Summary; the dashboard has its own presentation contract.
 
 Metadata reads request only sheet identity, frozen row count, and band ranges,
 without grid cell data. Each invocation checks presentation again, so retries
 can finish initialization after an accepted request with a lost response without
 adding another band. Formatting is presentation only, never authoritative state.
 Existing cross-writer races remain; this adds no locking mechanism.
+
+## 2026-10-04 — Selected-year Summary dashboard
+
+Summary reports exactly one calendar year, selected in B3 from ascending exact
+Daily Log YYYY worksheet names. Preserve valid past-year selections, default
+blank/invalid selections to newest, and select a newly created annual tab once.
+Creation, year selection, and dropdown validation share one atomic Google batch
+so the switch survives later projection failures and ambiguous create responses.
+Formulas reference the selected tab; no DynamoDB reconciliation or additional
+worksheet is needed. Spreadsheet TODAY() is reporting-only and uses its timezone.
+
+Current corrected record state drives all metrics. Work Eq. sums Work Fraction,
+PTO Used sums PTO Fraction with no assumed entitlement, all NO_RESPONSE statuses
+count equally, and Changed=true is descriptive metadata rather than an audit log.
+Monthly January–December totals replace weekly averages and match headline
+semantics, using ISO text month prefixes rather than native date-cell coercion.
+Historical finalization and response-source metadata do not affect counts.
+
+The sorted Date/Day PTO list reserves 15 data rows as expected annual display
+capacity, not entitlement enforcement. A visible overflow warning directs the
+viewer to Daily Log when more records exist; totals still include every record.
+Records Through computes the maximum logical date regardless of physical order.
+
+Owned labels/formulas are initialized only when blank and checked using entered
+content, not calculated results. Unexpected nonblank content fails before Summary
+writes. B3 is user-controlled; unrelated cells remain untouched. One batch applies
+narrow value, validation, and formatting changes; repeats only repair differences
+and auto-size columns. Summary follows successful Daily Log upserts, so dashboard
+failures leave authoritative projection rows intact for retry/manual repair.

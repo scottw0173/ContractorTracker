@@ -20,16 +20,19 @@ import (
 // sheetFixture handles the real SDK's requests without network access. Rows
 // include physical gaps so date matching must preserve actual row numbers.
 type sheetFixture struct {
-	t                                       *testing.T
-	titles                                  []string
-	header                                  []interface{}
-	rows                                    [][]interface{}
-	creates, headerWrites, updates, appends int
-	sheets                                  map[string]*googlesheets.Sheet
-	freezeUpdates, bandAdds, resizeCalls    int
-	updatedRange                            string
-	failStage                               string
-	failure                                 error
+	t                                                                                *testing.T
+	titles                                                                           []string
+	header                                                                           []interface{}
+	rows                                                                             [][]interface{}
+	creates, headerWrites, updates, appends                                          int
+	sheets                                                                           map[string]*googlesheets.Sheet
+	freezeUpdates, bandAdds, resizeCalls                                             int
+	updatedRange                                                                     string
+	failStage                                                                        string
+	failure                                                                          error
+	summary                                                                          map[summaryCoordinate]*googlesheets.CellData
+	summaryValueWrites, summaryFormatWrites, summaryValidationWrites, summaryResizes int
+	summaryBatches                                                                   [][]*googlesheets.Request
 }
 
 func (f *sheetFixture) client() *Client {
@@ -57,6 +60,14 @@ func (f *sheetFixture) request(r *http.Request) (*http.Response, error) {
 	stage := ""
 	switch {
 	case r.Method == "GET" && path == "/v4/spreadsheets/test-id":
+		if r.URL.Query().Get("ranges") == summaryRange {
+			stage = "summaryRead"
+			if r.URL.Query().Get("fields") != summaryMetadataFields {
+				f.t.Fatal("Summary read must be scoped to entered cells")
+			}
+			body = &googlesheets.Spreadsheet{Sheets: []*googlesheets.Sheet{{Properties: f.sheet("Summary").Properties, Data: []*googlesheets.GridData{{RowData: f.summaryRows()}}}}}
+			break
+		}
 		stage = "metadata"
 		tabs := []interface{}{}
 		for _, title := range f.titles {
@@ -68,7 +79,16 @@ func (f *sheetFixture) request(r *http.Request) (*http.Response, error) {
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			f.t.Fatal(err)
 		}
+		if len(in.Requests) > 0 && (in.Requests[0].UpdateCells != nil || in.Requests[0].SetDataValidation != nil || (in.Requests[0].AutoResizeDimensions != nil && in.Requests[0].AutoResizeDimensions.Dimensions.SheetId == f.sheet("Summary").Properties.SheetId)) {
+			stage = "summaryWrite"
+			f.applySummary(in.Requests)
+			break
+		}
 		for _, req := range in.Requests {
+			if req.UpdateCells != nil || req.SetDataValidation != nil {
+				f.applySummary([]*googlesheets.Request{req})
+				continue
+			}
 			if req.AddSheet != nil {
 				stage = "create"
 				f.creates++
@@ -190,8 +210,8 @@ func (f *sheetFixture) request(r *http.Request) (*http.Response, error) {
 }
 
 func TestYearlyWorksheet(t *testing.T) {
-	for _, year := range []int{2026, 2027, 2028} {
-		if got := yearlyWorksheet(year); got != fmt.Sprintf("Daily Log %d", year) {
+	for _, year := range []int{1, 2026, 2027, 2028, 9999} {
+		if got := yearlyWorksheet(year); got != fmt.Sprintf("Daily Log %04d", year) {
 			t.Fatal(got)
 		}
 	}
@@ -313,7 +333,7 @@ func TestProjectionValues(t *testing.T) {
 }
 
 func TestProjectionFailures(t *testing.T) {
-	for _, stage := range []string{"metadata", "create", "header", "initialize", "dates", "append", "update", "presentation", "resize"} {
+	for _, stage := range []string{"metadata", "create", "header", "initialize", "dates", "append", "update", "presentation", "resize", "summaryRead", "summaryWrite"} {
 		t.Run(stage, func(t *testing.T) {
 			failure := errors.New("offline failure")
 			f := &sheetFixture{t: t, titles: []string{"Summary", "Daily Log 2026"}, header: dailyHeaders, failStage: stage, failure: failure}

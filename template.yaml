@@ -15,7 +15,8 @@ Parameters:
     Description: Plain SES-verified mailbox in the stack region, without a display name.
   EmailTo:
     Type: String
-    Default: sweeps5937@gmail.com
+    MinLength: 3
+    AllowedPattern: '[^\s<>@]+@[^\s<>@]+'
     Description: Recipient mailbox for daily status prompts.
   AppTimezone:
     Type: String

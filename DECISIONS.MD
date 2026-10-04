@@ -174,6 +174,7 @@ The shared HMAC secret is retrieved from the existing CT-TokenSecret SSM
 SecureString parameter once per daily/status cold start with decryption. Only
 the configurable parameter name is passed through CloudFormation/Lambda settings;
 secret values and private deployment files must never be committed or logged.
+The safe shared samconfig.toml holds stable mechanics only.
 No Secrets Manager dependency is introduced.
 
 EventBridge Scheduler uses ScheduleV2 with the application timezone. The proven
@@ -184,8 +185,8 @@ or schedule group is configured; its flexible time window is OFF.
 The authoritative DynamoDB table uses Retain for deletion and replacement.
 Function roles receive only their current table operations and standard Lambda
 logging. SES SendEmail is limited to the configured verified sender identity.
-The configured production SES recipient is preserved; the full production path
-has now been tested end-to-end.
+EmailFrom and EmailTo are deployment-specific required external parameters,
+without committed defaults. The full production path has been tested end-to-end.
 
 
 ## 2026-10-03 — Google Sheets authorization boundary
@@ -361,3 +362,27 @@ existing days; both rely on resulting stream notifications without invoking
 SheetSync. There is no supported direct per-date projection invocation. If a
 legitimate authoritative change cannot repair an inconsistency, an explicit
 future reconciliation/replay mechanism is needed; none is introduced here.
+
+
+## 2026-10-04 — GitHub OIDC deployment boundary
+
+GitHub Actions verifies pull requests without AWS credentials; pushes to main
+deploy only after verification succeeds and an independent rebuild. OIDC uses
+temporary credentials with audience sts.amazonaws.com and exact immutable
+repo:scottw0173@156988004/ContractorTracker@1403695477:ref:refs/heads/main
+trust. No long-lived AWS credentials are stored in GitHub.
+
+An independent bootstrap stack creates/reuses the GitHub provider, a dedicated
+private artifact bucket, GitHub deploy role and CloudFormation execution role.
+Deploy packages artifacts and operates only contractor-tracker; PassRole permits
+only the execution role. Execution manages current app service resources and
+SAM-generated application role patterns, excluding bootstrap roles/provider.
+CreateEventSourceMapping is the only Resource "*" grant because the API cannot
+be resource-scoped; its FunctionArn condition still limits creation to SheetSync.
+
+Stable non-sensitive SAM settings are committed; EmailFrom/EmailTo have no
+defaults and come from external GitHub configuration Variables. Values are
+validated without echoing them; SAM deployment output is suppressed because
+it prints parameter overrides. Variables themselves are not log-masked.
+No account role/bucket or secret values are saved in samconfig.toml.
+Default rollback is retained; empty deployments succeed without prompts.

@@ -52,29 +52,127 @@ it is not a coordinated rotation mechanism. Production expects normal SSM-manage
 SecureString encryption. A future customer-managed KMS key would need narrowly
 scoped kms:Decrypt permissions and its key policy; no broad KMS access is added.
 
-For the next deployment (not performed in this slice):
-
-1. Verify CT-TokenSecret exists as SecureString in the deployment region without
-   displaying its value. Keep the same existing production secret.
-2. Remove the old TokenSecret override from deployment commands and private
-   samconfig.toml. Keep secret material and samconfig.toml out of Git.
-3. Preserve existing stack/mailbox settings and explicitly supply
-   TokenSecretParameter=CT-TokenSecret, DailyScheduleExpression="cron(0 6 * * ? *)",
-   AppTimezone=America/Mazatlan, and DailyScheduleState=ENABLED. Existing stack or
-   guided-deployment overrides can otherwise preserve old disabled/time values.
-4. Review the change set for removal of TOKEN_SECRET, addition of the name-only
-   environment setting, and each function's scoped SSM GetParameter permission.
-5. After deployment, open an old email link to GET its confirmation page without
-   submitting it. This safely checks cold-start retrieval and unchanged signing
-   compatibility. Check startup logs without printing SDK causes or secret values.
-6. To manually smoke-test the worker, first verify today's record has already
-   responded or been emailed if you want to avoid another prompt. Its normal
-   finalization/send behavior is unchanged. Verify the deployed schedule state,
-   timezone, and expression, then observe the next 6:00 AM run.
-
 The public Function URL uses `AuthType: NONE`; signed bearer tokens provide
 application authorization. The table is retained on stack deletion or
 replacement, so retained data will require deliberate management later.
+
+## Deployment
+
+Stable non-sensitive SAM settings are committed in samconfig.toml: stack
+contractor-tracker, region us-east-2, CAPABILITY_IAM, no change-set prompt, and
+no failure on an empty change set. EmailFrom/EmailTo have no template defaults;
+supply both externally. Never save email addresses, HMAC/Google credentials,
+AWS credentials, account role ARNs, or parameter overrides in this file.
+
+### One-time external setup
+
+Using existing AWS administrator credentials in us-east-2, deploy the independent
+bootstrap stack (these commands are instructions, not run by this repository):
+
+```sh
+aws cloudformation deploy \
+  --region us-east-2 \
+  --stack-name contractor-tracker-github-bootstrap \
+  --template-file infra/github-actions-bootstrap.yaml \
+  --capabilities CAPABILITY_NAMED_IAM
+```
+
+If this account already has the provider for
+https://token.actions.githubusercontent.com, add
+`--parameter-overrides ExistingGitHubOIDCProviderArn="$GITHUB_OIDC_PROVIDER_ARN"`
+with its existing ARN. Reuse requires audience sts.amazonaws.com; do not create
+a duplicate provider. Deploy the bootstrap only once in this account/region:
+its role names are account-global and intentionally deterministic.
+
+Record its outputs:
+
+```sh
+aws cloudformation describe-stacks --region us-east-2 \
+  --stack-name contractor-tracker-github-bootstrap \
+  --query 'Stacks[0].Outputs'
+```
+
+In GitHub, open Repository → Settings → Secrets and variables → Actions →
+Variables and create:
+
+- AWS_DEPLOY_ROLE_ARN: the GitHubDeployRoleArn output.
+- EMAIL_FROM: the plain verified SES sending mailbox.
+- EMAIL_TO: the intended recipient mailbox.
+
+Keep the existing SSM secrets, SES identities, and Google spreadsheet access.
+No external configuration is created automatically by this code. GitHub Variables
+are non-secret and not log-masked. The workflow does not echo email values and
+suppresses SAM output because SAM prints parameter overrides. GitHub may still
+display environment configuration in workflow logs. To hide the email addresses,
+store only EMAIL_FROM/EMAIL_TO as GitHub Secrets and change their two vars
+references to secrets references; the application architecture stays the same.
+Do not store AWS access keys in GitHub.
+
+Bootstrap outputs also include CloudFormationExecutionRoleArn and ArtifactBucketName.
+CI derives these from STS account ID and us-east-2 using the deterministic names;
+no additional repository Variables are needed. The retained private, AES256-encrypted
+artifact bucket stores deployment packages only, under contractor-tracker/.
+It grants no access to application runtime roles. S3 account-level policies still
+apply; retention means bootstrap deletion does not erase packaged artifacts.
+
+### Routine deployment
+
+Push/merge to main after setup. Pull requests run verification only, without AWS
+authentication. A main push verifies formatting, tests, whitespace, SAM lint,
+and all three binaries before deployment. The deploy job independently checks out,
+sets up Go/SAM, assumes the GitHub role with OIDC, rebuilds, and deploys
+noninteractively. No long-lived AWS credentials are stored in GitHub.
+Deploy jobs are serialized without canceling an in-progress CloudFormation update.
+Rollback remains enabled; documentation-only changes with no stack diff succeed.
+
+Trust is restricted to audience sts.amazonaws.com and this exact immutable subject:
+
+```text
+repo:scottw0173@156988004/ContractorTracker@1403695477:ref:refs/heads/main
+```
+
+No GitHub environment is attached to the deploy job because it would change that
+subject. Protect main and review workflow/bootstrap changes according to your
+repository policy; this slice does not change repository settings.
+
+The GitHub role can list/read/write only its artifact bucket/prefix, create/inspect/
+execute/delete change sets for contractor-tracker, use the SAM transform, and pass
+only contractor-tracker-cloudformation-execution to CloudFormation. It cannot
+directly administer Lambda, DynamoDB, or application IAM roles.
+
+The CloudFormation execution role manages the three app functions and their URL/
+permissions, the SheetSync stream mapping, the retained day table/stream, the
+default-group scheduler, and app-generated IAM roles/policies. Name/ARN patterns
+preserve existing SAM physical names without forcing resource replacements.
+IAM management cannot match bootstrap roles or the OIDC provider; managed-policy
+attachment is limited to AWSLambdaBasicExecutionRole. PassRole is constrained
+to app roles and Lambda/Scheduler. Artifact access is read-only.
+Resource "*" is used only for lambda:CreateEventSourceMapping, which has no
+resource-level authorization; lambda:FunctionArn still restricts it to SheetSync.
+Other generated IDs use account/region-scoped patterns. New resource types or
+renamed logical IDs may require a reviewed bootstrap policy update.
+
+### Local deployment
+
+With existing local AWS credentials, supply email values externally and use the
+same noninteractive configuration. Do not use --guided or save overrides:
+
+```sh
+sam build --build-in-source
+sam deploy \
+  --s3-bucket "$ARTIFACT_BUCKET" \
+  --s3-prefix contractor-tracker \
+  --role-arn "$CLOUDFORMATION_EXECUTION_ROLE_ARN" \
+  --parameter-overrides "EmailFrom=$EMAIL_FROM" "EmailTo=$EMAIL_TO"
+```
+
+Set the bucket/role from bootstrap outputs and both email variables locally.
+Your identity needs the corresponding bucket/CloudFormation/PassRole access.
+Alternatively use an existing private artifact bucket and omit --role-arn when
+your manual deployment identity has resource-management permissions (an existing
+stack service role can remain attached). SAM output may include email overrides;
+keep local output private. Never supply the HMAC secret: CT-TokenSecret remains
+the default SSM name, and schedule/timezone defaults remain production-ready.
 
 ## Automatic Sheets projection
 

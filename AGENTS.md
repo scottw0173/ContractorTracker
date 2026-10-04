@@ -83,7 +83,28 @@ customer-managed KMS key additionally needs scoped kms:Decrypt. Displayed loader
 errors hide SDK error text; unwrapped causes must not be logged. The Google
 credential loader remains independent, with per-invocation retrieval unchanged.
 
-Secrets and generated/local deployment files must not be committed.
+Secrets and generated/private deployment files must not be committed.
+The checked-in samconfig.toml contains only stable non-sensitive deployment
+mechanics; no email values, secrets, parameter overrides, role ARN or artifact
+bucket belong in it. EmailFrom and EmailTo are required external parameters.
+
+GitHub Actions verifies pull requests without AWS credentials. Verified pushes
+to main rebuild and deploy noninteractively to contractor-tracker in us-east-2.
+GitHub OIDC trust uses the exact immutable subject
+repo:scottw0173@156988004/ContractorTracker@1403695477:ref:refs/heads/main
+and audience sts.amazonaws.com. Only deploy requests id-token: write.
+Repository Variables AWS_DEPLOY_ROLE_ARN, EMAIL_FROM and EMAIL_TO are validated
+without printing values. Variables are not masked; email-only Secrets references
+are an optional privacy choice. No AWS access keys are stored in GitHub.
+
+infra/github-actions-bootstrap.yaml is independent of the application stack:
+optional GitHub provider creation/reuse, private retained artifact bucket, OIDC
+deploy role and dedicated CloudFormation execution role. Deploy can package,
+operate only the app stack, and pass only the execution role. Execution manages
+only current app services and generated role patterns, excluding bootstrap IAM.
+CreateEventSourceMapping requires Resource "*" but is function-ARN conditioned.
+No deployment, external setup or repository-settings mutation is implied by
+editing these files; the operator performs bootstrap and Variables setup.
 
 ---
 

@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Independent GitHub OIDC deployment boundary for contractor-tracker in us-east-2.
+
+Parameters:
+  ExistingGitHubOIDCProviderArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com'
+    Description: Existing GitHub OIDC provider ARN in this account; blank creates one.
+
+Conditions:
+  CreateGitHubOIDCProvider: !Equals [!Ref ExistingGitHubOIDCProviderArn, '']
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateGitHubOIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'contractor-tracker-sam-artifacts-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: contractor-tracker-cloudformation-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ContractorTrackerResources
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadPackagedCode
+                Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource: !Sub '${ArtifactBucket.Arn}/contractor-tracker/*'
+              - Sid: ApplicationFunctions
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:DeleteFunction
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                  - lambda:GetPolicy
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:CreateFunctionUrlConfig
+                  - lambda:GetFunctionUrlConfig
+                  - lambda:UpdateFunctionUrlConfig
+                  - lambda:DeleteFunctionUrlConfig
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:contractor-tracker-DailyWorkerFunction-*'
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:contractor-tracker-StatusHandlerFunction-*'
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:contractor-tracker-SheetSyncFunction-*'
+              # CreateEventSourceMapping has no resource-level authorization.
+              - Sid: CreateApplicationStreamMapping
+                Effect: Allow
+                Action: lambda:CreateEventSourceMapping
+                Resource: '*'
+                Condition:
+                  ArnLike:
+                    lambda:FunctionArn: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:contractor-tracker-SheetSyncFunction-*'
+              # Mapping IDs are generated; constrain their function, account, region.
+              - Sid: ManageApplicationStreamMapping
+                Effect: Allow
+                Action:
+                  - lambda:GetEventSourceMapping
+                  - lambda:UpdateEventSourceMapping
+                  - lambda:DeleteEventSourceMapping
+                Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*'
+                Condition:
+                  ArnLike:
+                    lambda:FunctionArn: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:contractor-tracker-SheetSyncFunction-*'
+              - Sid: ApplicationTable
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:ListTagsOfResource
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/contractor-tracker-DayTable-*'
+              - Sid: ApplicationSchedule
+                Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:GetSchedule
+                  - scheduler:UpdateSchedule
+                  - scheduler:DeleteSchedule
+                Resource: !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/contractor-tracker-*'
+              # These match CF-generated names, including long logical-ID truncation.
+              # They do not match either bootstrap role.
+              - Sid: ApplicationRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:GetRole
+                  - iam:UpdateRole
+                  - iam:UpdateRoleDescription
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-DailyWorkerFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-StatusHandlerFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-SheetSyncFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-DailyWorkerFunctionDailySchedule*'
+              - Sid: ApplicationLoggingPolicy
+                Effect: Allow
+                Action: [iam:AttachRolePolicy, iam:DetachRolePolicy]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-DailyWorkerFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-StatusHandlerFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-SheetSyncFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-DailyWorkerFunctionDailySchedule*'
+                Condition:
+                  ArnEquals:
+                    iam:PolicyARN: !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+              - Sid: PassApplicationRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-DailyWorkerFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-StatusHandlerFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-SheetSyncFunctionRole-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/contractor-tracker-DailyWorkerFunctionDailySchedule*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: [lambda.amazonaws.com, scheduler.amazonaws.com]
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: contractor-tracker-github-deploy
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateGitHubOIDCProvider
+                - !Ref GitHubOIDCProvider
+                - !Ref ExistingGitHubOIDCProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: repo:scottw0173@156988004/ContractorTracker@1403695477:ref:refs/heads/main
+      Policies:
+        - PolicyName: PackageAndDeployApplication
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ArtifactBucketMetadata
+                Effect: Allow
+                Action: [s3:GetBucketLocation, s3:ListBucket]
+                Resource: !GetAtt ArtifactBucket.Arn
+              - Sid: PackagedArtifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:AbortMultipartUpload]
+                Resource: !Sub '${ArtifactBucket.Arn}/contractor-tracker/*'
+              - Sid: CreateApplicationChangeSet
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/contractor-tracker/*'
+                Condition:
+                  StringEquals:
+                    cloudformation:RoleArn: !GetAtt CloudFormationExecutionRole.Arn
+              - Sid: AllowSAMTransform
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+              - Sid: OperateApplicationStack
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:ListStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/contractor-tracker/*'
+              - Sid: PassOnlyApplicationExecutionRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+
+Outputs:
+  GitHubDeployRoleArn:
+    Value: !GetAtt GitHubDeployRole.Arn
+  CloudFormationExecutionRoleArn:
+    Value: !GetAtt CloudFormationExecutionRole.Arn
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket

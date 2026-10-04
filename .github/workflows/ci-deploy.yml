@@ -1,0 +1,102 @@
+name: Verify and deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  SAM_CLI_TELEMETRY: "0"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+      - name: Verify Go formatting
+        shell: bash
+        run: |
+          mapfile -d '' go_files < <(git ls-files -z '*.go')
+          unformatted=$(gofmt -l "${go_files[@]}")
+          if [[ -n "$unformatted" ]]; then
+            printf 'Go files need gofmt:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      - run: go test ./...
+      - run: git diff --check
+      - run: sam validate --lint
+      - run: sam validate --lint --template-file infra/github-actions-bootstrap.yaml
+      - run: sam build --build-in-source
+
+  deploy:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: contractor-tracker-production-deploy
+      cancel-in-progress: false
+    env:
+      AWS_REGION: us-east-2
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+      EMAIL_TO: ${{ vars.EMAIL_TO }}
+    steps:
+      - name: Validate repository configuration
+        shell: bash
+        run: |
+          for name in AWS_DEPLOY_ROLE_ARN EMAIL_FROM EMAIL_TO; do
+            value="${!name}"
+            if [[ -z "${value//[[:space:]]/}" ]]; then
+              printf '::error::Missing repository variable %s\n' "$name"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-2
+          role-session-name: contractor-tracker-github
+          unset-current-credentials: true
+      - name: Build
+        run: sam build --build-in-source
+      - name: Deploy
+        shell: bash
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          execution_role="arn:aws:iam::${account_id}:role/contractor-tracker-cloudformation-execution"
+          artifact_bucket="contractor-tracker-sam-artifacts-${account_id}-${AWS_REGION}"
+          # SAM may print parameter overrides; suppress both output streams.
+          # Retain failures as a generic message without exposing email values.
+          if ! sam deploy \
+            --s3-bucket "$artifact_bucket" \
+            --s3-prefix contractor-tracker \
+            --role-arn "$execution_role" \
+            --parameter-overrides "EmailFrom=$EMAIL_FROM" "EmailTo=$EMAIL_TO" \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset >/dev/null 2>&1; then
+            printf '::error::SAM deployment failed. Inspect contractor-tracker CloudFormation events in us-east-2.\n'
+            exit 1
+          fi

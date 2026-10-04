@@ -15,7 +15,7 @@ Parameters:
     Description: Plain SES-verified mailbox in the stack region, without a display name.
   EmailTo:
     Type: String
-    Default: success@simulator.amazonses.com
+    Default: sweeps5937@gmail.com
     Description: Initial recipient is the SES mailbox simulator.
   AppTimezone:
     Type: String
@@ -82,7 +82,9 @@ Resources:
               Resource: !GetAtt DayTable.Arn
             - Effect: Allow
               Action: ses:SendEmail
-              Resource: !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${EmailFrom}'
+              Resource: 
+                - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${EmailFrom}'
+                - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${EmailTo}'
       Events:
         DailySchedule:
           Type: ScheduleV2

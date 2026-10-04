@@ -17,11 +17,11 @@ func TestVerifyWorksheets(t *testing.T) {
 		name, body, missing string
 	}{
 		{"both exist", `{"sheets":[{"properties":{"title":"Summary"}},{"properties":{"title":"Other"}},{"properties":{"title":"Daily Log"}}]}`, ""},
-		{"missing daily log", `{"sheets":[{"properties":{"title":"Summary"}}]}`, "Daily Log"},
+		{"Summary alone", `{"sheets":[{"properties":{"title":"Summary"}}]}`, ""},
 		{"missing summary", `{"sheets":[{"properties":{"title":"Daily Log"}}]}`, "Summary"},
-		{"missing both", `{}`, "Daily Log, Summary"},
-		{"exact names", `{"sheets":[{"properties":{"title":"daily log"}},{"properties":{"title":"Summary "}}]}`, "Daily Log, Summary"},
-		{"incomplete metadata", `{"sheets":[null,{}]}`, "Daily Log, Summary"},
+		{"missing both", `{}`, "Summary"},
+		{"exact names", `{"sheets":[{"properties":{"title":"daily log"}},{"properties":{"title":"Summary "}}]}`, "Summary"},
+		{"incomplete metadata", `{"sheets":[null,{}]}`, "Summary"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			type contextKey struct{}

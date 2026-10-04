@@ -4,7 +4,7 @@ ContractorTracker records daily contractor work status, PTO, time off, and
 non-responses. DynamoDB is authoritative. A scheduled daily Lambda finalizes
 an existing pending yesterday and sends today's SES prompt when needed.
 Signed email links open a read-only confirmation page; an explicit POST
-records the response through conditional DynamoDB updates. Google Sheets
+records the response through conditional DynamoDB updates. Manual per-date Google Sheets projection is available; automatic
 synchronization is not implemented yet.
 
 ## Build and validate
@@ -51,13 +51,45 @@ The public Function URL uses `AuthType: NONE`; signed bearer tokens provide
 application authorization. The table is retained on stack deletion or
 replacement, so retained data will require deliberate management later.
 
-## Manual Sheets metadata check
+## Manual Sheets projection
 
-`SheetSyncFunction` has no automatic trigger. On manual invocation it decrypts
-`GCP-Project-Key` from SSM, authenticates as the service account, and reads only
-spreadsheet metadata to require the existing `Daily Log` and `Summary` tabs.
-The spreadsheet and parameter are configured through its environment variables
-in `template.yaml`. Share the spreadsheet with the service account beforehand.
-No cells, tabs, or formulas are changed; synchronization is still deferred.
-If the SSM SecureString uses a customer-managed KMS key, its role will also need
-scoped `kms:Decrypt` permission for that key before invocation.
+`SheetSyncFunction` accepts one `{year, date}` event and has no automatic trigger.
+It reads that DynamoDB day, decrypts `GCP-Project-Key` from SSM, and upserts the
+record into `Daily Log YYYY`, creating the yearly tab if needed. `Summary` must
+already exist. The unyearly `Daily Log` tab is unused. Share the spreadsheet with
+the service account with edit access beforehand. A customer-managed SSM KMS key
+also requires scoped `kms:Decrypt` permission.
+
+Header order is exactly:
+
+```text
+Date | Day | Status | Work Fraction | PTO Fraction | Weekend | Email Sent At | Responded At | Response Source | Finalized At | Changed
+```
+
+Blank headers are initialized; nonblank mismatches and duplicate dates fail.
+Repeated invocation updates the same row. Unrelated rows and Summary are not
+rewritten; there is no sorting, full-year reconciliation, or Stream trigger.
+DynamoDB remains authoritative. Reserved concurrency is one; avoid simultaneous
+external edits to application-owned headers and date rows.
+
+After deployment, choose a date that already exists in DynamoDB. For example:
+
+```json
+{"year":2026,"date":"2026-10-03"}
+```
+
+Use the deployed `SheetSyncFunctionName` output as the function name (replace
+the placeholder below). Use AWS CLI credentials and region for that stack:
+
+```sh
+aws lambda invoke \
+  --function-name '<SheetSyncFunctionName output>' \
+  --invocation-type RequestResponse \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"year":2026,"date":"2026-10-03"}' \
+  /tmp/contractortracker-sheet-sync-result.json
+cat /tmp/contractortracker-sheet-sync-result.json
+```
+
+Success returns `null`; check that the CLI response has no `FunctionError`.
+Invoking again should update the same date row rather than append another.

@@ -7,22 +7,24 @@ import (
 )
 
 func TestLoadSheets(t *testing.T) {
+	t.Setenv("TABLE_NAME", "test-table")
 	t.Setenv("GOOGLE_CREDENTIALS_PARAMETER", "test-google-key")
 	t.Setenv("GOOGLE_SPREADSHEET_ID", "test-spreadsheet-id")
-	for _, key := range []string{"TABLE_NAME", "TOKEN_SECRET", "APP_TIMEZONE", "RESPONSE_BASE_URL", "EMAIL_FROM", "EMAIL_TO"} {
+	for _, key := range []string{"TOKEN_SECRET", "APP_TIMEZONE", "RESPONSE_BASE_URL", "EMAIL_FROM", "EMAIL_TO"} {
 		t.Setenv(key, "")
 	}
 	got, err := LoadSheets()
-	want := Sheets{CredentialsParameter: "test-google-key", SpreadsheetID: "test-spreadsheet-id"}
+	want := Sheets{TableName: "test-table", CredentialsParameter: "test-google-key", SpreadsheetID: "test-spreadsheet-id"}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v; want %+v", got, err, want)
 	}
 }
 
 func TestLoadSheetsRequiredSettings(t *testing.T) {
-	for _, key := range []string{"GOOGLE_CREDENTIALS_PARAMETER", "GOOGLE_SPREADSHEET_ID"} {
+	for _, key := range []string{"TABLE_NAME", "GOOGLE_CREDENTIALS_PARAMETER", "GOOGLE_SPREADSHEET_ID"} {
 		for _, mode := range []string{"missing", "empty", "blank"} {
 			t.Run(key+"/"+mode, func(t *testing.T) {
+				t.Setenv("TABLE_NAME", "test-table")
 				t.Setenv("GOOGLE_CREDENTIALS_PARAMETER", "test-google-key")
 				t.Setenv("GOOGLE_SPREADSHEET_ID", "test-spreadsheet-id")
 				switch mode {

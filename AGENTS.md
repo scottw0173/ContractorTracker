@@ -80,8 +80,9 @@ Secrets and generated/local deployment files must not be committed.
 # High-Level Architecture
 
 There are three Lambda functions. The sheet-sync function currently has no trigger;
-manual invocation loads SSM credentials and verifies Daily Log and Summary using
-a read-only spreadsheet metadata request. It does not synchronize or write data.
+manual invocation accepts {year, date}, reads that authoritative DynamoDB day,
+and incrementally upserts it into Daily Log YYYY. Summary must already exist.
+There is no DynamoDB Stream trigger or full-year reconciliation.
 
 ## daily-worker
 
@@ -94,7 +95,8 @@ Responsibilities:
 3. If yesterday exists and is still `PENDING`, convert it to `NO_RESPONSE`
    using a conditional write requiring the stored status still to be `PENDING`.
    Leave missing records absent and continue after conditional conflicts.
-4. Eventually synchronize DynamoDB records to Google Sheets (not yet implemented).
+4. Google Sheets projection is separate and manually invoked; the daily worker
+   does not synchronize spreadsheets.
 5. Ensure today's record exists without replacing existing data; reread an
    existing record before deciding whether to prompt.
 6. Build and send today's status email only while its status is `PENDING`
@@ -388,15 +390,25 @@ The reporting layer can interpret weekend and weekday non-responses differently 
 
 Google Sheets is a reporting projection, not the database.
 
-internal/sheets provides credential loading, client construction, and a read-only
-metadata check for the existing Daily Log and Summary worksheets.
-GOOGLE_CREDENTIALS_PARAMETER and GOOGLE_SPREADSHEET_ID select the SSM parameter
-and existing target. Credentials are decrypted from Parameter Store and used
-for service-account authentication with the Sheets read/write scope, without
-Drive access or default credential discovery. No spreadsheet synchronization,
-worksheet setup, or DynamoDB Stream integration is implemented. cmd/sheet-sync
-performs only the metadata check on manual invocation, loading credentials and
-constructing its Google client with the invocation context.
+internal/sheets loads SSM credentials, constructs clients, and incrementally
+upserts one authoritative DayRecord into Daily Log YYYY. TABLE_NAME selects
+the DynamoDB table; GOOGLE_CREDENTIALS_PARAMETER and GOOGLE_SPREADSHEET_ID select
+the decrypted SSM credential and existing spreadsheet. Google clients use only
+the Sheets read/write scope, without Drive or default credential discovery.
+
+Summary must exist separately. Missing yearly tabs are created; blank headers
+are initialized, valid headers are retained, and nonblank mismatches fail.
+Read only the Date column below row 1: exactly one match is updated, no match
+is appended, and duplicate dates fail. No unrelated rows are rewritten or sorted.
+All writes use RAW values; nil work fractions and zero timestamps become blanks.
+Timestamps use UTC RFC3339Nano, and numeric fractions and boolean flags keep
+their types. The schema is Date, Day, Status, Work Fraction, PTO Fraction,
+Weekend, Email Sent At, Responded At, Response Source, Finalized At, Changed.
+
+cmd/sheet-sync validates the positive year and exact matching ISO date before
+using the existing strongly consistent GetDay. It loads credentials and creates
+the Google client per invocation. Reserved concurrency is one to serialize
+Lambda writers. No Stream trigger, Summary formulas, or full-year sync exists.
 
 DynamoDB must remain authoritative.
 

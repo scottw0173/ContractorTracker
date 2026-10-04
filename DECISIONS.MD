@@ -193,10 +193,22 @@ spreadsheet ID selects the existing target; it does not restrict OAuth access.
 Google sharing permissions must grant the service account access to that file.
 Client construction is offline; token acquisition occurs lazily on API use.
 
-## 2026-10-03 — Manual Sheets integration check
+## 2026-10-03 — Incremental manual Sheets projection
 
-The sheet-sync Lambda initially has no automatic trigger and performs only a
-metadata GET, requiring the existing Daily Log and Summary worksheets. It loads
-SSM credentials on each invocation and scopes the Google client to that
-invocation's context so token acquisition cannot retain an expired invocation
-context. No spreadsheet writes or DynamoDB Stream processing are enabled.
+DynamoDB remains authoritative. Manual {year, date} events read one day with
+strongly consistent GetDay and upsert it into Daily Log YYYY. Summary remains
+an existing separate worksheet; the unyearly Daily Log tab is not required.
+Yearly tabs are created on demand. Application-owned headers are initialized
+only when blank; nonblank schema mismatches and duplicate dates fail rather
+than silently choosing or overwriting data. No full-year rebuild or sort occurs.
+
+RAW values retain strings, numeric fractions, and boolean flags; nil fractions
+and zero timestamps become empty cells. Present timestamps use UTC RFC3339Nano.
+Reserved concurrency of one serializes this Lambda's read-then-write upserts;
+external writers are not covered. There are no Streams or Summary formulas.
+
+SSM credentials are loaded on each invocation and the Google client retains
+only that invocation's context, avoiding expired contexts during token refresh.
+A retry rereads DynamoDB and locates the existing date row, including after an
+ambiguous successful append. A response updated during projection may require
+another manual invocation to refresh the projected snapshot.

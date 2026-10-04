@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-func isUserStatus(status Status) bool {
+// IsUserStatus reports whether a status can be selected in a user response.
+func IsUserStatus(status Status) bool {
 	return status == StatusFullDay || status == StatusHalfDay || status == StatusTimeOff || status == StatusPTO
 }
 
@@ -13,10 +14,10 @@ func isUserStatus(status Status) bool {
 // Repeating the current status leaves every field unchanged. FinalizedAt is
 // retained so corrections to late responses remain identifiable as late.
 func ApplyUserStatus(record DayRecord, status Status, at time.Time) (DayRecord, error) {
-	if !isUserStatus(status) {
+	if !IsUserStatus(status) {
 		return record, fmt.Errorf("invalid user status %q", status)
 	}
-	if record.Status != StatusPending && record.Status != StatusNoResponse && !isUserStatus(record.Status) {
+	if record.Status != StatusPending && record.Status != StatusNoResponse && !IsUserStatus(record.Status) {
 		return record, fmt.Errorf("invalid record status %q", record.Status)
 	}
 	if record.Status == status {
@@ -25,7 +26,7 @@ func ApplyUserStatus(record DayRecord, status Status, at time.Time) (DayRecord, 
 	if at.IsZero() {
 		return record, fmt.Errorf("response timestamp must not be zero")
 	}
-	record.HasBeenChanged = record.HasBeenChanged || isUserStatus(record.Status)
+	record.HasBeenChanged = record.HasBeenChanged || IsUserStatus(record.Status)
 	late := record.Status == StatusNoResponse || !record.FinalizedAt.IsZero() || record.ResponseSource == ResponseSourceLateUser
 	record.Status = status
 	fraction := 0.0
@@ -51,7 +52,7 @@ func ApplyUserStatus(record DayRecord, status Status, at time.Time) (DayRecord, 
 // unchanged. The caller decides when the day is due for finalization.
 func FinalizePending(record DayRecord, at time.Time) (DayRecord, error) {
 	if record.Status != StatusPending {
-		if record.Status == StatusNoResponse || isUserStatus(record.Status) {
+		if record.Status == StatusNoResponse || IsUserStatus(record.Status) {
 			return record, nil
 		}
 		return record, fmt.Errorf("invalid record status %q", record.Status)

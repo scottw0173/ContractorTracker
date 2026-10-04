@@ -35,7 +35,7 @@ func TestApplyUserStatus(t *testing.T) {
 					if from == StatusNoResponse || late {
 						record, _ = FinalizePending(record, first)
 					}
-					if isUserStatus(from) {
+					if IsUserStatus(from) {
 						record, _ = ApplyUserStatus(record, from, first)
 					} else {
 						record.Status = from
@@ -61,7 +61,7 @@ func TestApplyUserStatus(t *testing.T) {
 					if to == StatusPTO {
 						want.PTOFraction = 1
 					}
-					want.HasBeenChanged = isUserStatus(from)
+					want.HasBeenChanged = IsUserStatus(from)
 					want.ResponseSource = ResponseSourceUser
 					if late || from == StatusNoResponse {
 						want.ResponseSource = ResponseSourceLateUser
@@ -106,7 +106,7 @@ func TestFinalizePending(t *testing.T) {
 			if status == StatusNoResponse {
 				record, _ = FinalizePending(record, at)
 			}
-			if isUserStatus(status) {
+			if IsUserStatus(status) {
 				record, _ = ApplyUserStatus(record, status, at)
 			}
 			if status == StatusPending {
@@ -165,6 +165,22 @@ func TestInvalidTransitions(t *testing.T) {
 			}
 			if err == nil || !reflect.DeepEqual(got, tc.record) {
 				t.Fatal("invalid transition accepted or record changed")
+			}
+		})
+	}
+}
+
+func TestIsUserStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status Status
+		want   bool
+	}{
+		{StatusFullDay, true}, {StatusHalfDay, true}, {StatusPTO, true}, {StatusTimeOff, true},
+		{StatusPending, false}, {StatusNoResponse, false}, {"unknown", false}, {"", false},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			if got := IsUserStatus(tc.status); got != tc.want {
+				t.Fatalf("IsUserStatus(%q) = %v, want %v", tc.status, got, tc.want)
 			}
 		})
 	}

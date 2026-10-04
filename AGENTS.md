@@ -389,9 +389,11 @@ The Google API dependency is for Google Sheets only.
 
 Email-response links must not mutate data through GET requests.
 
-A future implementation should use signed response data so arbitrary callers cannot change work records.
-
-Do not design the token mechanism until that phase is requested.
+Email response date/status claims use versioned HMAC-SHA256 bearer tokens.
+Token contents are signed, not encrypted, and do not authenticate human identity.
+Tokens currently do not expire so old emails can support late responses and
+corrections. The future handler must verify the token and use its signed claims
+rather than trusting separate query parameters.
 
 ---
 

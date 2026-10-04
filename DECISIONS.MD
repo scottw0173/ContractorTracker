@@ -48,3 +48,23 @@ finalization from overwriting a concurrent user response.
 A missing previous-day record represents missing system data, not proof of
 non-response. Only an existing `PENDING` record can become `NO_RESPONSE`;
 the daily runner does not create synthetic records for missing days.
+
+## 2026-10-03 — Signed email response capabilities
+
+Email response date/status claims use versioned HMAC-SHA256 signed bearer
+tokens rather than JWT or server-side token storage. The wire format is
+unpadded base64url(JSON payload) followed by a dot and base64url(HMAC), with
+the HMAC computed over the exact encoded payload string.
+
+## 2026-10-03 — No token expiration
+
+Tokens currently do not expire because late responses and corrections from
+older emails are intentionally supported. The status handler will determine
+which record mutations an old valid token may perform.
+
+## 2026-10-03 — Token security scope
+
+Token contents are signed but not encrypted. The signature protects the
+date/status from modification without the secret; it neither hides the
+contents nor authenticates a human identity. Treat tokens as bearer
+capabilities: anyone possessing a valid token can present its signed claims.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -15,6 +16,7 @@ import (
 
 // DynamoDBClient is the subset of the SDK client used by Store.
 type DynamoDBClient interface {
+	UpdateItem(context.Context, *dynamodb.UpdateItemInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	PutItem(context.Context, *dynamodb.PutItemInput, ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
@@ -144,4 +146,26 @@ func (s *Store) ListYear(ctx context.Context, year int) ([]tracker.DayRecord, er
 		}
 		input.ExclusiveStartKey = out.LastEvaluatedKey
 	}
+}
+
+// MarkEmailSent sets only the timestamp on an existing, not-yet-marked day.
+func (s *Store) MarkEmailSent(ctx context.Context, year int, date string, at time.Time) (bool, error) {
+	if at.IsZero() {
+		return false, fmt.Errorf("mark email sent %s: timestamp must not be zero", date)
+	}
+	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName), Key: dayKey(year, date),
+		UpdateExpression:          aws.String("SET #sent = :sent_at"),
+		ConditionExpression:       aws.String("attribute_exists(#year) AND attribute_exists(#date) AND attribute_not_exists(#sent)"),
+		ExpressionAttributeNames:  map[string]string{"#year": "year", "#date": "date", "#sent": "email_sent_at"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":sent_at": &types.AttributeValueMemberS{Value: *timestampString(at)}},
+	})
+	var conflict *types.ConditionalCheckFailedException
+	if errors.As(err, &conflict) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("mark email sent %s: %w", date, err)
+	}
+	return true, nil
 }

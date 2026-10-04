@@ -80,15 +80,21 @@ Responsibilities:
    using a conditional write requiring the stored status still to be `PENDING`.
    Leave missing records absent and continue after conditional conflicts.
 4. Synchronize DynamoDB records to Google Sheets.
-5. Ensure today's `PENDING` record exists.
-6. Send today's status email through Amazon SES if an email has not already been sent.
-7. Record the time the email was successfully sent.
+5. Ensure today's record exists without replacing existing data; reread an
+   existing record before deciding whether to prompt.
+6. Build and send today's status email only while its status is `PENDING`
+   and `EmailSentAt` is absent.
+7. After SES accepts the email, conditionally persist only `EmailSentAt`
+   using UpdateItem, requiring the day to exist and the timestamp to be absent.
 
 The daily process should be idempotent where practical.
 
 A Lambda retry must not create duplicate daily records.
 
-A Lambda retry should not intentionally send duplicate emails when `EmailSentAt` already indicates successful delivery.
+A Lambda retry should not send another prompt when `EmailSentAt` is present
+or today already has a user response. Delivery is at-least-once: a failed
+timestamp write or concurrent workers can cause duplicate emails; no
+distributed send lock is used.
 
 ## status-handler
 

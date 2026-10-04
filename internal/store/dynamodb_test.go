@@ -14,11 +14,12 @@ import (
 	"github.com/scottw0173/ContractorTracker/internal/tracker"
 )
 
-// fakeClient has only the three operations the store needs.
+// fakeClient implements only the operations the store needs.
 type fakeClient struct {
-	get   func(context.Context, *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error)
-	put   func(context.Context, *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error)
-	query func(context.Context, *dynamodb.QueryInput) (*dynamodb.QueryOutput, error)
+	update func(context.Context, *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error)
+	get    func(context.Context, *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error)
+	put    func(context.Context, *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error)
+	query  func(context.Context, *dynamodb.QueryInput) (*dynamodb.QueryOutput, error)
 }
 
 func (f fakeClient) GetItem(ctx context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
@@ -258,5 +259,58 @@ func TestPutDayIfStatus(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func (f fakeClient) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+	return f.update(ctx, in)
+}
+
+func TestMarkEmailSent(t *testing.T) {
+	failure := errors.New("update failed")
+	at := time.Date(2026, 10, 5, 12, 30, 45, 123456789, time.FixedZone("app", -7*3600))
+	for _, tc := range []struct {
+		name    string
+		err     error
+		updated bool
+	}{
+		{"updated", nil, true}, {"conflict", &types.ConditionalCheckFailedException{}, false},
+		{"wrapped conflict", fmt.Errorf("SDK: %w", &types.ConditionalCheckFailedException{}), false}, {"failure", failure, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			client := fakeClient{update: func(gotCtx context.Context, in *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+				want := &dynamodb.UpdateItemInput{
+					TableName: aws.String("days"), Key: dayKey(2026, "2026-10-05"),
+					UpdateExpression:          aws.String("SET #sent = :sent_at"),
+					ConditionExpression:       aws.String("attribute_exists(#year) AND attribute_exists(#date) AND attribute_not_exists(#sent)"),
+					ExpressionAttributeNames:  map[string]string{"#year": "year", "#date": "date", "#sent": "email_sent_at"},
+					ExpressionAttributeValues: map[string]types.AttributeValue{":sent_at": &types.AttributeValueMemberS{Value: at.Format(time.RFC3339Nano)}},
+				}
+				if gotCtx != ctx || !reflect.DeepEqual(in, want) {
+					t.Fatal("incorrect timestamp-only conditional update or context")
+				}
+				return &dynamodb.UpdateItemOutput{}, tc.err
+			}}
+			updated, err := New(client, "days").MarkEmailSent(ctx, 2026, "2026-10-05", at)
+			if updated != tc.updated {
+				t.Fatalf("updated = %v", updated)
+			}
+			if tc.err == failure {
+				if !errors.Is(err, failure) {
+					t.Fatalf("error lost: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	client := fakeClient{update: func(context.Context, *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		t.Fatal("zero time reached client")
+		return nil, nil
+	}}
+	if updated, err := New(client, "days").MarkEmailSent(context.Background(), 2026, "2026-10-05", time.Time{}); updated || err == nil {
+		t.Fatal("zero timestamp accepted")
 	}
 }

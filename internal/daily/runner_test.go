@@ -8,13 +8,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/scottw0173/ContractorTracker/internal/email"
 	"github.com/scottw0173/ContractorTracker/internal/store"
 	"github.com/scottw0173/ContractorTracker/internal/tracker"
 )
 
 var _ DayStore = (*store.Store)(nil)
+var _ MessageBuilder = (*email.Builder)(nil)
+var _ MessageSender = (*email.Sender)(nil)
 
 type memoryStore struct {
+	markErr                   error
+	markConflict              bool
+	missingToday              bool
+	todayGetErr               error
+	marks                     []tracker.DayRecord
+	beforeMark                func(*memoryStore)
 	records                   map[string]tracker.DayRecord
 	getErr, putErr, createErr error
 	beforePut                 func(*memoryStore, tracker.DayRecord)
@@ -28,6 +37,12 @@ func (s *memoryStore) GetDay(_ context.Context, year int, date string) (tracker.
 	s.reads = append(s.reads, tracker.DayRecord{Year: year, Date: date})
 	if s.getErr != nil {
 		return tracker.DayRecord{}, false, s.getErr
+	}
+	if len(s.creates) > 0 && s.todayGetErr != nil {
+		return tracker.DayRecord{}, false, s.todayGetErr
+	}
+	if len(s.creates) > 0 && s.missingToday {
+		return tracker.DayRecord{}, false, nil
 	}
 	record, ok := s.records[date]
 	return record, ok && record.Year == year, nil
@@ -68,7 +83,7 @@ func mustTime(t *testing.T, value string) time.Time {
 }
 func mustRunner(t *testing.T, s DayStore, location *time.Location) *Runner {
 	t.Helper()
-	runner, err := New(s, location)
+	runner, err := New(s, &fakeBuilder{}, &fakeSender{}, location)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +135,7 @@ func TestYesterdayStatuses(t *testing.T) {
 				t.Fatalf("yesterday changed unexpectedly: %+v", s.records[original.Date])
 			}
 			today := tracker.NewPendingDay(now.In(location))
+			today.EmailSentAt = now.UTC()
 			if !reflect.DeepEqual(s.records[today.Date], today) {
 				t.Fatal("today not created as pending")
 			}
@@ -189,6 +205,7 @@ func TestTodayAndRepeatPreserveData(t *testing.T) {
 					t.Fatal("existing today was reset")
 				}
 			} else {
+				today.EmailSentAt = now.UTC()
 				if !reflect.DeepEqual(s.records[today.Date], today) {
 					t.Fatal("missing today not created")
 				}
@@ -277,10 +294,243 @@ func TestStorageErrors(t *testing.T) {
 }
 
 func TestNewRequiresDependencies(t *testing.T) {
-	if runner, err := New(newMemoryStore(), nil); err == nil || runner != nil {
+	if runner, err := New(newMemoryStore(), nil, &fakeSender{}, time.UTC); err == nil || runner != nil {
+		t.Fatal("nil builder accepted")
+	}
+	if runner, err := New(newMemoryStore(), &fakeBuilder{}, nil, time.UTC); err == nil || runner != nil {
+		t.Fatal("nil sender accepted")
+	}
+	if runner, err := New(newMemoryStore(), &fakeBuilder{}, &fakeSender{}, nil); err == nil || runner != nil {
 		t.Fatal("nil timezone accepted")
 	}
-	if runner, err := New(nil, time.UTC); err == nil || runner != nil {
+	if runner, err := New(nil, &fakeBuilder{}, &fakeSender{}, time.UTC); err == nil || runner != nil {
 		t.Fatal("nil store accepted")
+	}
+}
+
+func (s *memoryStore) MarkEmailSent(_ context.Context, year int, date string, at time.Time) (bool, error) {
+	s.marks = append(s.marks, tracker.DayRecord{Year: year, Date: date, EmailSentAt: at})
+	if s.markErr != nil {
+		return false, s.markErr
+	}
+	if s.beforeMark != nil {
+		s.beforeMark(s)
+	}
+	current, exists := s.records[date]
+	if s.markConflict || !exists || current.Year != year || !current.EmailSentAt.IsZero() {
+		return false, nil
+	}
+	current.EmailSentAt = at
+	s.records[date] = current
+	return true, nil
+}
+
+type fakeBuilder struct {
+	dates   []string
+	message email.Message
+	err     error
+}
+
+func (b *fakeBuilder) Build(date string) (email.Message, error) {
+	b.dates = append(b.dates, date)
+	return b.message, b.err
+}
+
+type fakeSender struct {
+	messages []email.Message
+	err      error
+	ctx      context.Context
+}
+
+func (s *fakeSender) Send(ctx context.Context, message email.Message) error {
+	s.ctx = ctx
+	s.messages = append(s.messages, message)
+	return s.err
+}
+
+func TestPromptDecisions(t *testing.T) {
+	now := mustTime(t, "2026-10-05T12:00:00-07:00")
+	for _, tc := range []struct {
+		name          string
+		exists        bool
+		status        tracker.Status
+		emailed, send bool
+	}{
+		{"new day", false, tracker.StatusPending, false, true},
+		{"existing pending", true, tracker.StatusPending, false, true},
+		{"already emailed", true, tracker.StatusPending, true, false},
+		{"full day", true, tracker.StatusFullDay, false, false},
+		{"half day", true, tracker.StatusHalfDay, false, false},
+		{"PTO", true, tracker.StatusPTO, false, false},
+		{"time off", true, tracker.StatusTimeOff, false, false},
+		{"no response", true, tracker.StatusNoResponse, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newMemoryStore()
+			original := mustStatus(t, tracker.NewPendingDay(now), tc.status, now)
+			if tc.emailed {
+				original.EmailSentAt = now.Add(-time.Hour)
+			}
+			if tc.exists {
+				s.records[original.Date] = original
+			}
+			message := email.Message{Subject: "subject", TextBody: "text", HTMLBody: "<p>HTML</p>"}
+			b, send := &fakeBuilder{message: message}, &fakeSender{}
+			runner, err := New(s, b, send, now.Location())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := runner.Run(ctx, now); err != nil {
+				t.Fatal(err)
+			}
+			reads := 1
+			if tc.exists {
+				reads = 2
+			}
+			if len(s.reads) != reads || (tc.exists && (s.reads[1].Year != 2026 || s.reads[1].Date != "2026-10-05")) {
+				t.Fatal("existing day not reread")
+			}
+			if tc.send {
+				if !reflect.DeepEqual(b.dates, []string{"2026-10-05"}) || !reflect.DeepEqual(send.messages, []email.Message{message}) || send.ctx != ctx {
+					t.Fatal("incorrect build/send")
+				}
+				want := tracker.DayRecord{Year: 2026, Date: "2026-10-05", EmailSentAt: now.UTC()}
+				if !reflect.DeepEqual(s.marks, []tracker.DayRecord{want}) {
+					t.Fatalf("incorrect mark: %+v", s.marks)
+				}
+			} else {
+				if len(b.dates)+len(send.messages)+len(s.marks) != 0 {
+					t.Fatal("suppressed day prompted or fabricated mark")
+				}
+				if !reflect.DeepEqual(s.records[original.Date], original) {
+					t.Fatal("suppressed record changed")
+				}
+			}
+		})
+	}
+}
+
+func TestPromptFailures(t *testing.T) {
+	now := mustTime(t, "2026-10-05T12:00:00Z")
+	failure := errors.New("operation failed")
+	for _, tc := range []struct {
+		name, step           string
+		builds, sends, marks int
+	}{
+		{"build", "build today email", 1, 0, 0}, {"send", "send today email", 1, 1, 0},
+		{"mark", "mark today email sent", 1, 1, 1}, {"reread", "get today", 0, 0, 0},
+		{"missing reread", "record missing after CreateDay", 0, 0, 0},
+		{"yesterday get", "get yesterday", 0, 0, 0}, {"yesterday finalize", "save finalized yesterday", 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newMemoryStore()
+			b, send := &fakeBuilder{}, &fakeSender{}
+			switch tc.name {
+			case "build":
+				b.err = failure
+			case "send":
+				send.err = failure
+			case "mark":
+				s.markErr = failure
+			case "reread", "missing reread":
+				current := tracker.NewPendingDay(now)
+				s.records[current.Date] = current
+				s.todayGetErr = failure
+				if tc.name == "missing reread" {
+					s.todayGetErr = nil
+					s.missingToday = true
+				}
+			case "yesterday get":
+				s.getErr = failure
+			case "yesterday finalize":
+				previous := tracker.NewPendingDay(now.AddDate(0, 0, -1))
+				s.records[previous.Date] = previous
+				s.putErr = failure
+			}
+			runner, err := New(s, b, send, time.UTC)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = runner.Run(context.Background(), now)
+			if err == nil || !strings.Contains(err.Error(), tc.step) || !strings.Contains(err.Error(), "2026-10-") {
+				t.Fatalf("missing step/date: %v", err)
+			}
+			if tc.name != "missing reread" && !errors.Is(err, failure) {
+				t.Fatal("error cause lost")
+			}
+			if len(b.dates) != tc.builds || len(send.messages) != tc.sends || len(s.marks) != tc.marks {
+				t.Fatal("continued after failure")
+			}
+			if tc.name == "mark" && !s.records["2026-10-05"].EmailSentAt.IsZero() {
+				t.Fatal("failed mark persisted")
+			}
+		})
+	}
+}
+
+func TestEmailRetries(t *testing.T) {
+	now := mustTime(t, "2026-10-05T12:00:00Z")
+	for _, mode := range []string{"successful mark", "failed mark", "response before retry", "mark conflict"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newMemoryStore()
+			b, send := &fakeBuilder{}, &fakeSender{}
+			failure := errors.New("mark failed")
+			if mode == "failed mark" || mode == "response before retry" {
+				s.markErr = failure
+			}
+			if mode == "mark conflict" {
+				s.markConflict = true
+			}
+			runner, err := New(s, b, send, time.UTC)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = runner.Run(context.Background(), now)
+			if !errors.Is(err, s.markErr) {
+				t.Fatalf("unexpected first result: %v", err)
+			}
+			if mode == "mark conflict" {
+				if len(send.messages) != 1 || len(s.marks) != 1 {
+					t.Fatal("conflict retried within run")
+				}
+				return
+			}
+			s.markErr = nil
+			if mode == "response before retry" {
+				s.records["2026-10-05"] = mustStatus(t, s.records["2026-10-05"], tracker.StatusFullDay, now.Add(time.Minute))
+			}
+			if err := runner.Run(context.Background(), now.Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			count := 1
+			if mode == "failed mark" {
+				count = 2
+			}
+			if len(b.dates) != count || len(send.messages) != count || len(s.marks) != count {
+				t.Fatal("incorrect retry send behavior")
+			}
+			if mode == "response before retry" && !s.records["2026-10-05"].EmailSentAt.IsZero() {
+				t.Fatal("response fabricated timestamp")
+			}
+		})
+	}
+}
+
+func TestMarkPreservesRapidResponse(t *testing.T) {
+	s := newMemoryStore()
+	now := mustTime(t, "2026-10-05T12:00:00Z")
+	var response tracker.DayRecord
+	s.beforeMark = func(s *memoryStore) {
+		response = mustStatus(t, s.records["2026-10-05"], tracker.StatusPTO, now)
+		s.records[response.Date] = response
+	}
+	if err := mustRunner(t, s, time.UTC).Run(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	response.EmailSentAt = now.UTC()
+	if !reflect.DeepEqual(s.records[response.Date], response) {
+		t.Fatal("mark overwrote rapid response")
 	}
 }

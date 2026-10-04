@@ -78,12 +78,27 @@ token as authorization and selection input. Production links should use HTTPS.
 
 ## 2026-10-03 — Email delivery ordering
 
-Future daily orchestration will send the SES email first, then persist
+Daily orchestration sends the SES email first, then persists
 EmailSentAt. This provides at-least-once delivery: a crash after SES accepts
 the email but before the timestamp is saved may cause a duplicate on retry.
 That is preferable to saving the timestamp first and suppressing the only
 prompt if sending fails. SES acceptance does not guarantee inbox delivery.
 
-Future EmailSentAt persistence must update only the timestamp attribute,
-not replace the entire DayRecord, so a rapid concurrent user response is
-not overwritten. This storage operation is not implemented yet.
+EmailSentAt persistence updates only the timestamp attribute,
+not the entire DayRecord, so a rapid concurrent user response is not overwritten.
+It uses a conditional DynamoDB UpdateItem requiring the day to exist and the
+timestamp attribute to be absent. Existing timestamps are never replaced.
+
+## 2026-10-03 — Daily prompt eligibility and recovery
+
+Send only while today's status is PENDING and EmailSentAt is absent. An
+existing user response suppresses a retry prompt even without EmailSentAt:
+SES may have succeeded, timestamp persistence failed, and the user responded
+before the retry. Do not fabricate a timestamp for that response.
+
+## 2026-10-03 — Concurrent email delivery
+
+Delivery remains at-least-once. Concurrent daily workers can both send before
+either persists EmailSentAt. This small residual duplicate-delivery possibility
+is accepted instead of adding a distributed claim or locking protocol.
+Timestamp conditional conflicts are expected and complete the run successfully.

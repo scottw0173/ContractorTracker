@@ -8,7 +8,7 @@ The system should:
 
 - Ask the user for their work status once per day by email.
 - Record the response in DynamoDB.
-- Distinguish full days, half days, time off, and non-responses.
+- Distinguish full days, half days, PTO, time off, and non-responses.
 - Preserve whether a non-response occurred on a weekend.
 - Use DynamoDB as the authoritative source of truth.
 - Periodically project the DynamoDB data into a Google Sheet for human-readable reporting.
@@ -176,6 +176,7 @@ type DayRecord struct {
     Date           string
     Status         Status
     WorkFraction   *float64
+    PTOFraction    float64
     IsWeekend      bool
 
     EmailSentAt    time.Time
@@ -201,6 +202,7 @@ Allowed statuses:
 PENDING
 FULL_DAY
 HALF_DAY
+PTO
 TIME_OFF
 NO_RESPONSE
 ```
@@ -209,20 +211,31 @@ Do not use `WEEKEND` as a status.
 
 Weekend information belongs in `IsWeekend`.
 
-## Work Fraction
+## Work and PTO Fractions
+
+`PTO` consumes the contractor's annual PTO allowance, currently 15 days per
+calendar year, for a day that otherwise would have been a working day.
+`TIME_OFF` does not consume PTO: it represents a normally non-working day,
+such as a weekend, holiday, or company closure.
 
 ```text
-PENDING      -> nil
-FULL_DAY     -> 1.0
-HALF_DAY     -> 0.5
-PTO          -> 0.0
-TIME_OFF     -> 0.0
-NO_RESPONSE  -> nil
+Status        WorkFraction  PTOFraction
+PENDING       nil           0
+FULL_DAY      1.0           0
+HALF_DAY      0.5           0
+PTO           0.0           1.0
+TIME_OFF      0.0           0
+NO_RESPONSE   nil           0
 ```
+
+Selecting PTO currently means a full PTO day. There is no half-day-PTO user
+status. PTOFraction allows PTO consumption to be totaled independently of
+work status and leaves room for partial-day PTO later.
 
 `NO_RESPONSE` must NOT be represented as zero hours or zero work fraction.
 
-A lack of response means the work amount is unknown.
+A lack of response means the work amount is unknown. It must never be
+interpreted as PTO or TIME_OFF.
 
 ---
 
@@ -299,7 +312,15 @@ HALF_DAY -> PTO
 TIME_OFF -> FULL_DAY
 TIME_OFF -> HALF_DAY
 TIME_OFF -> PTO
+
+PTO -> FULL_DAY
+PTO -> HALF_DAY
+PTO -> TIME_OFF
 ```
+
+Changing an already user-selected status to a different user-selected status
+sets HasBeenChanged permanently to true, including corrections to or from PTO.
+Initial responses and late responses replacing NO_RESPONSE are not corrections.
 
 Submitting the currently selected status again should be harmless.
 
@@ -357,6 +378,7 @@ The email should eventually offer:
 
 - Full Day
 - Half Day
+- PTO
 - Time Off
 
 Do not require Gmail APIs for email delivery.
@@ -432,7 +454,7 @@ Use idiomatic Go table-driven tests where appropriate.
 
 Important behavior to test eventually includes:
 
-- work fraction for each status;
+- work and PTO fractions for each status;
 - weekend detection;
 - valid user state transitions;
 - automatic `PENDING -> NO_RESPONSE`;
@@ -467,7 +489,7 @@ Build incrementally in this general order:
 ## Project Decisions
 
 Significant architectural or behavioral decisions that are not obvious
-from the code should be recorded in `docs/DECISIONS.md`.
+from the code should be recorded in `DECISIONS.MD`.
 
 Keep this file concise. Do not log routine implementation choices or
 turn it into a development diary.

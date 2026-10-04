@@ -6,7 +6,7 @@ import (
 )
 
 func isUserStatus(status Status) bool {
-	return status == StatusFullDay || status == StatusHalfDay || status == StatusTimeOff
+	return status == StatusFullDay || status == StatusHalfDay || status == StatusTimeOff || status == StatusPTO
 }
 
 // ApplyUserStatus records a response or correction without modifying record.
@@ -29,11 +29,14 @@ func ApplyUserStatus(record DayRecord, status Status, at time.Time) (DayRecord, 
 	late := record.Status == StatusNoResponse || !record.FinalizedAt.IsZero() || record.ResponseSource == ResponseSourceLateUser
 	record.Status = status
 	fraction := 0.0
+	record.PTOFraction = 0
 	switch status {
 	case StatusFullDay:
 		fraction = 1.0
 	case StatusHalfDay:
 		fraction = 0.5
+	case StatusPTO:
+		record.PTOFraction = 1
 	}
 	record.WorkFraction = &fraction
 	record.RespondedAt = at
@@ -58,6 +61,7 @@ func FinalizePending(record DayRecord, at time.Time) (DayRecord, error) {
 	}
 	record.Status = StatusNoResponse
 	record.WorkFraction = nil
+	record.PTOFraction = 0
 	record.FinalizedAt = at
 	record.ResponseSource = ResponseSourceAutoFinalize
 	return record, nil

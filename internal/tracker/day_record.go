@@ -10,6 +10,7 @@ const (
 	StatusFullDay    Status = "FULL_DAY"
 	StatusHalfDay    Status = "HALF_DAY"
 	StatusTimeOff    Status = "TIME_OFF"
+	StatusPTO        Status = "PTO"
 	StatusNoResponse Status = "NO_RESPONSE"
 )
 
@@ -23,11 +24,13 @@ const (
 
 // DayRecord describes one calendar day. Zero timestamps mean the event has
 // not occurred; a nil WorkFraction means the amount of work is unknown.
+// PTOFraction records days of PTO consumed independently of work performed.
 type DayRecord struct {
 	Year           int
 	Date           string
 	Status         Status
 	WorkFraction   *float64
+	PTOFraction    float64
 	IsWeekend      bool
 	EmailSentAt    time.Time
 	RespondedAt    time.Time

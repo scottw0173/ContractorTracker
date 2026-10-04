@@ -25,10 +25,10 @@ func TestNewPendingDay(t *testing.T) {
 func TestApplyUserStatus(t *testing.T) {
 	first := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	next := first.Add(time.Hour)
-	statuses := []Status{StatusPending, StatusNoResponse, StatusFullDay, StatusHalfDay, StatusTimeOff}
+	statuses := []Status{StatusPending, StatusNoResponse, StatusFullDay, StatusHalfDay, StatusTimeOff, StatusPTO}
 	for _, from := range statuses {
 		for _, late := range []bool{false, true} {
-			for _, to := range []Status{StatusFullDay, StatusHalfDay, StatusTimeOff} {
+			for _, to := range []Status{StatusFullDay, StatusHalfDay, StatusTimeOff, StatusPTO} {
 				t.Run(fmtName(from, to, late), func(t *testing.T) {
 					record := NewPendingDay(first)
 					record.EmailSentAt = first
@@ -54,9 +54,13 @@ func TestApplyUserStatus(t *testing.T) {
 						}
 						return
 					}
-					fraction := map[Status]float64{StatusFullDay: 1, StatusHalfDay: 0.5, StatusTimeOff: 0}[to]
+					fraction := map[Status]float64{StatusFullDay: 1, StatusHalfDay: 0.5, StatusTimeOff: 0, StatusPTO: 0}[to]
 					want := before
 					want.Status, want.WorkFraction, want.RespondedAt = to, &fraction, next
+					want.PTOFraction = 0
+					if to == StatusPTO {
+						want.PTOFraction = 1
+					}
 					want.HasBeenChanged = isUserStatus(from)
 					want.ResponseSource = ResponseSourceUser
 					if late || from == StatusNoResponse {
@@ -82,7 +86,7 @@ func fmtName(from, to Status, late bool) string {
 func TestCorrectionFlagStaysTrue(t *testing.T) {
 	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	record := NewPendingDay(at)
-	for i, status := range []Status{StatusFullDay, StatusHalfDay, StatusFullDay, StatusFullDay, StatusTimeOff} {
+	for i, status := range []Status{StatusFullDay, StatusPTO, StatusPTO, StatusHalfDay, StatusFullDay, StatusFullDay, StatusTimeOff, StatusPTO} {
 		var err error
 		record, err = ApplyUserStatus(record, status, at.Add(time.Duration(i)*time.Hour))
 		if err != nil {
@@ -96,7 +100,7 @@ func TestCorrectionFlagStaysTrue(t *testing.T) {
 
 func TestFinalizePending(t *testing.T) {
 	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
-	for _, status := range []Status{StatusPending, StatusNoResponse, StatusFullDay, StatusHalfDay, StatusTimeOff} {
+	for _, status := range []Status{StatusPending, StatusNoResponse, StatusFullDay, StatusHalfDay, StatusTimeOff, StatusPTO} {
 		t.Run(string(status), func(t *testing.T) {
 			record := NewPendingDay(at)
 			if status == StatusNoResponse {
@@ -104,6 +108,12 @@ func TestFinalizePending(t *testing.T) {
 			}
 			if isUserStatus(status) {
 				record, _ = ApplyUserStatus(record, status, at)
+			}
+			if status == StatusPending {
+				// Finalization must explicitly clear any stale fractions.
+				fraction := 0.5
+				record.WorkFraction = &fraction
+				record.PTOFraction = 1
 			}
 			before := record
 			got, err := FinalizePending(record, at.Add(time.Hour))
@@ -113,6 +123,7 @@ func TestFinalizePending(t *testing.T) {
 			want := before
 			if status == StatusPending {
 				want.Status, want.ResponseSource = StatusNoResponse, ResponseSourceAutoFinalize
+				want.WorkFraction, want.PTOFraction = nil, 0
 				want.FinalizedAt = at.Add(time.Hour)
 			}
 			if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(record, before) {
@@ -124,7 +135,7 @@ func TestFinalizePending(t *testing.T) {
 
 func TestInvalidTransitions(t *testing.T) {
 	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
-	for _, status := range []Status{StatusPending, StatusNoResponse, "PTO", "invalid", ""} {
+	for _, status := range []Status{StatusPending, StatusNoResponse, "HALF_DAY_PTO", "invalid", ""} {
 		t.Run(string(status), func(t *testing.T) {
 			record := NewPendingDay(at)
 			got, err := ApplyUserStatus(record, status, at)

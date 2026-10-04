@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -116,13 +117,13 @@ func TestSummaryFormulaContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	records := summaryText(f, 3, 5)
-	for _, part := range []string{"MAX(", "ARRAYFORMULA(", "LEFT(dates,4)", "MID(dates,6,2)", "RIGHT(dates,2)", "COUNTA(dates)=0", `"mmm d, yyyy"`} {
+	for _, part := range []string{"A2:A370", "MAX(", "ARRAYFORMULA(", "LEFT(dates,4)", "MID(dates,6,2)", "RIGHT(dates,2)", "COUNTA(dates)=0", `"mmm d, yyyy"`} {
 		if !strings.Contains(records, part) {
 			t.Fatalf("Records Through missing %s: %s", part, records)
 		}
 	}
 	today := summaryText(f, 4, 2)
-	for _, part := range []string{"$B$3", "YEAR(TODAY())", "MATCH(TEXT(TODAY()", `"No Record"`, `"—"`} {
+	for _, part := range []string{"A2:A370", "C2:C370", "$B$3", "YEAR(TODAY())", "MATCH(TEXT(TODAY()", `"No Record"`, `"—"`} {
 		if !strings.Contains(today, part) {
 			t.Fatal(today)
 		}
@@ -131,12 +132,12 @@ func TestSummaryFormulaContract(t *testing.T) {
 		col                              int64
 		label, operation, column, status string
 	}{
-		{1, "Workday Equivalent", "SUM(", "D2:D", ""},
-		{2, "Full Days", "COUNTIF(", "C2:C", "FULL_DAY"},
-		{3, "Half Days", "COUNTIF(", "C2:C", "HALF_DAY"},
-		{4, "PTO Used", "SUM(", "E2:E", ""},
-		{5, "No Responses", "COUNTIF(", "C2:C", "NO_RESPONSE"},
-		{6, "Corrections", "COUNTIF(", "K2:K", "TRUE"},
+		{1, "Workday Equivalent", "SUM(", "D2:D370", ""},
+		{2, "Full Days", "COUNTIF(", "C2:C370", "FULL_DAY"},
+		{3, "Half Days", "COUNTIF(", "C2:C370", "HALF_DAY"},
+		{4, "PTO Used", "SUM(", "E2:E370", ""},
+		{5, "No Responses", "COUNTIF(", "C2:C370", "NO_RESPONSE"},
+		{6, "Corrections", "COUNTIF(", "K2:K370", "TRUE"},
 	} {
 		if summaryText(f, 6, tt.col) != tt.label {
 			t.Fatal("wrong headline")
@@ -167,7 +168,7 @@ func TestSummaryFormulaContract(t *testing.T) {
 		}
 		for col := int64(2); col <= 7; col++ {
 			formula := summaryText(f, row, col)
-			for _, part := range []string{fmt.Sprintf(`TEXT(%d,"00")`, i+1), `"-*"`, "$B$3", "A2:A"} {
+			for _, part := range []string{fmt.Sprintf(`TEXT(%d,"00")`, i+1), `"-*"`, "$B$3", "A2:A370"} {
 				if !strings.Contains(formula, part) {
 					t.Fatal(formula)
 				}
@@ -176,7 +177,7 @@ func TestSummaryFormulaContract(t *testing.T) {
 				t.Fatal("unexpected monthly classification")
 			}
 		}
-		if !strings.Contains(summaryText(f, row, 2), "D2:D") || !strings.Contains(summaryText(f, row, 5), "E2:E") || !strings.Contains(summaryText(f, row, 6), "TIME_OFF") || !strings.Contains(summaryText(f, row, 7), "NO_RESPONSE") {
+		if !strings.Contains(summaryText(f, row, 2), "D2:D370") || !strings.Contains(summaryText(f, row, 5), "E2:E370") || !strings.Contains(summaryText(f, row, 6), "TIME_OFF") || !strings.Contains(summaryText(f, row, 7), "NO_RESPONSE") {
 			t.Fatal("wrong monthly metric")
 		}
 	}
@@ -194,7 +195,7 @@ func TestSummaryFormulaContract(t *testing.T) {
 	for row := int64(29); row <= 43; row++ {
 		for col := int64(1); col <= 2; col++ {
 			formula := summaryText(f, row, col)
-			for _, part := range []string{"SORT(FILTER(", "A2:B", "C2:C", `="PTO"`, "1,TRUE", fmt.Sprintf(",%d,%d)", row-28, col), `IFERROR(`} {
+			for _, part := range []string{"SORT(FILTER(", "A2:B370", "C2:C370", `="PTO"`, "1,TRUE", fmt.Sprintf(",%d,%d)", row-28, col), `IFERROR(`} {
 				if !strings.Contains(formula, part) {
 					t.Fatal(formula)
 				}
@@ -205,7 +206,7 @@ func TestSummaryFormulaContract(t *testing.T) {
 		t.Fatal("PTO data extends past 15 rows")
 	}
 	overflow := summaryText(f, 27, 4)
-	if !strings.Contains(overflow, ">15") || !strings.Contains(overflow, "Overflow:") || !strings.Contains(overflow, "see selected Daily Log for all dates") {
+	if !strings.Contains(overflow, "C2:C370") || !strings.Contains(overflow, ">15") || !strings.Contains(overflow, "Overflow:") || !strings.Contains(overflow, "see selected Daily Log for all dates") {
 		t.Fatal("missing visible overflow")
 	}
 }
@@ -315,5 +316,34 @@ func TestNewYearSelectionSurvivesFailedProjection(t *testing.T) {
 				t.Fatal("later invocation overrides past year")
 			}
 		})
+	}
+}
+
+// Check every INDIRECT occurrence, including repeated monthly/PTO formulas,
+// rather than allowing an unbounded reference alongside a bounded one.
+func TestSummaryReferencesBoundedAnnualRange(t *testing.T) {
+	references := regexp.MustCompile(`INDIRECT\("'Daily Log "&\$B\$3&"'!([^"]+)"\)`)
+	allowed := map[string]bool{"A2:A370": true, "A2:B370": true, "C2:C370": true, "D2:D370": true, "E2:E370": true, "K2:K370": true}
+	seen := make(map[string]bool)
+	for _, cell := range summaryLayout() {
+		if cell.value.FormulaValue == nil {
+			continue
+		}
+		formula := *cell.value.FormulaValue
+		matches := references.FindAllStringSubmatch(formula, -1)
+		if len(matches) != strings.Count(formula, "INDIRECT(") {
+			t.Fatalf("unrecognized INDIRECT at %c%d: %s", 'A'+cell.col, cell.row+1, formula)
+		}
+		for _, match := range matches {
+			if !allowed[match[1]] {
+				t.Fatalf("unbounded or unexpected range %q at %c%d", match[1], 'A'+cell.col, cell.row+1)
+			}
+			seen[match[1]] = true
+		}
+	}
+	for reference := range allowed {
+		if !seen[reference] {
+			t.Fatalf("missing bounded reference %s", reference)
+		}
 	}
 }

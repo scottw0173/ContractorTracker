@@ -30,8 +30,8 @@ func summaryLayout() []summaryCell {
 	formula := func(row, col int64, text string) {
 		cells = append(cells, summaryCell{row: row - 1, col: col - 1, value: &googlesheets.ExtendedValue{FormulaValue: &text}})
 	}
-	dates, statuses := summaryReference("A2:A"), summaryReference("C2:C")
-	work, pto := summaryReference("D2:D"), summaryReference("E2:E")
+	dates, statuses := summaryReference("A2:A370"), summaryReference("C2:C370")
+	work, pto := summaryReference("D2:D370"), summaryReference("E2:E370")
 	label(1, 1, "Contractor Summary")
 	label(3, 1, "Reporting Year:")
 	label(3, 4, "Records Through:")
@@ -39,7 +39,7 @@ func summaryLayout() []summaryCell {
 	label(4, 1, "Today's Status:")
 	formula(4, 2, `=IF(VALUE($B$3)<>YEAR(TODAY()),"—",IFERROR(SWITCH(INDEX(`+statuses+`,MATCH(TEXT(TODAY(),"yyyy-mm-dd"),`+dates+`,0)),"PENDING","Pending","FULL_DAY","Full Day","HALF_DAY","Half Day","PTO","PTO","TIME_OFF","Time Off","NO_RESPONSE","No Response","Unknown"),"No Record"))`)
 	headlines := []string{"Workday Equivalent", "Full Days", "Half Days", "PTO Used", "No Responses", "Corrections"}
-	metrics := []string{`=SUM(` + work + `)`, `=COUNTIF(` + statuses + `,"FULL_DAY")`, `=COUNTIF(` + statuses + `,"HALF_DAY")`, `=SUM(` + pto + `)`, `=COUNTIF(` + statuses + `,"NO_RESPONSE")`, `=COUNTIF(` + summaryReference("K2:K") + `,TRUE)`}
+	metrics := []string{`=SUM(` + work + `)`, `=COUNTIF(` + statuses + `,"FULL_DAY")`, `=COUNTIF(` + statuses + `,"HALF_DAY")`, `=SUM(` + pto + `)`, `=COUNTIF(` + statuses + `,"NO_RESPONSE")`, `=COUNTIF(` + summaryReference("K2:K370") + `,TRUE)`}
 	for i, labelText := range headlines {
 		label(6, int64(i+1), labelText)
 		formula(7, int64(i+1), metrics[i])
@@ -71,7 +71,7 @@ func summaryLayout() []summaryCell {
 	label(28, 2, "Day")
 	for row := int64(29); row <= 43; row++ {
 		for col := int64(1); col <= 2; col++ {
-			formula(row, col, fmt.Sprintf(`=IFERROR(INDEX(SORT(FILTER(%s,%s="PTO"),1,TRUE),%d,%d),"")`, summaryReference("A2:B"), statuses, row-28, col))
+			formula(row, col, fmt.Sprintf(`=IFERROR(INDEX(SORT(FILTER(%s,%s="PTO"),1,TRUE),%d,%d),"")`, summaryReference("A2:B370"), statuses, row-28, col))
 		}
 	}
 	// Styles are attached only to owned cells. Masks preserve unrelated styles.

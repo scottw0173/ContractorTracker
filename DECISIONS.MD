@@ -239,3 +239,22 @@ DayTable stream ARN pattern. GetItem remains a separate table-only statement.
 Supplying an explicit role prevents SAM's generated role from attaching the
 broad AWSLambdaDynamoDBExecutionRole policy. The logical ID matches SAM's
 previous generated role. Manual keys remain supported for repair.
+
+## 2026-10-04 — Supported administrative corrections
+
+Administrative business-state corrections use the local cmd/admin-correct CLI
+with existing operator AWS credentials, not direct DynamoDB console field edits.
+Console edits bypass application transition semantics and are unsupported.
+The CLI reuses ApplyUserStatus and UpdateUserResponseIfCurrent, with current UTC
+time supplied at its boundary. Initial and late responses preserve correction
+metadata; changes between user statuses permanently set HasBeenChanged. Late
+responses/corrections remain LATE_USER and preserve FinalizedAt. HasBeenChanged
+is application state rather than a tamper-proof flag or an append-only audit log.
+
+The CLI previews each proposed transition and requires explicit confirmation.
+It retries at most three conditional write attempts, rereading and reconfirming
+on conflicts; matching status is a no-op with no write. Its small interactive
+loop is separate from signed submission, which intentionally still conditionally
+writes repeated responses. Domain logic and persistence expressions stay shared.
+Successful DynamoDB corrections use the existing Stream projection; no direct
+Sheets calls, administrative public endpoint, or new IAM/SAM resources are added.

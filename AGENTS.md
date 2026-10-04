@@ -152,6 +152,22 @@ base64-encoded event bodies. Forms post to the current local path without
 query parameters. Pages use no-store, no-referrer, nosniff, and a restrictive
 CSP; success and error pages contain no token or internal error details.
 
+## Local administrative corrections
+
+Use cmd/admin-correct for administrative business-state corrections rather than
+direct DynamoDB field edits, which bypass supported transition semantics.
+This local CLI validates --table/--year/--date/--status, reads the existing day,
+uses tracker.ApplyUserStatus, previews the resulting metadata, and requires
+explicit y/yes confirmation before UpdateUserResponseIfCurrent. It uses existing
+local AWS credentials; no administrative Lambda, endpoint, or SAM resource exists.
+
+Conditional conflicts reread/reapply, with fresh preview and confirmation, up to
+three write attempts. Same-status requests perform no write and retain response
+metadata. The outer CLI supplies current UTC time; no arbitrary timestamp input
+is supported. The existing Stream handles Sheets projection after a correction.
+HasBeenChanged is application state describing changes through supported user
+status transitions, not tamper-proof data or an audit log. No audit system exists.
+
 ---
 
 # Application Timezone
@@ -484,6 +500,9 @@ The project may evolve, but prefer approximately:
 
 ```text
 cmd/
+    admin-correct/
+        main.go
+
     daily-worker/
         main.go
 

@@ -108,3 +108,37 @@ cat /tmp/contractortracker-sheet-sync-result.json
 
 Success returns `null`; check that the CLI response has no `FunctionError`.
 Invoking again should update the same date row rather than append another.
+
+## Administrative corrections
+
+Use `cmd/admin-correct` for administrative business-state corrections rather
+than direct DynamoDB console field edits. Console edits bypass application
+transition semantics and are not a supported correction mechanism.
+
+```sh
+go run ./cmd/admin-correct \
+  --table '<deployed DayTable name>' \
+  --year 2026 \
+  --date 2026-10-04 \
+  --status FULL_DAY
+```
+
+Targets are `FULL_DAY`, `HALF_DAY`, `PTO`, or `TIME_OFF`. Existing local AWS
+credentials and region use the SDK default configuration chain; the operator's
+identity must have table `GetItem` and `UpdateItem` access. No token or service
+account credential is needed by this CLI.
+
+The command previews the transition and asks `Apply this correction? [y/N]`.
+Only `y` or `yes`, case-insensitive, permits a write. It uses the same domain
+transition function and narrow conditional update as normal responses, with
+at most three read/apply/write attempts. A conflict causes a fresh preview and
+another confirmation. Same-status requests report no effective change and
+perform no write. Missing records are errors; this command does not create days.
+
+Initial responses preserve the correction flag and use `USER`; responses after
+`NO_RESPONSE` use `LATE_USER` and preserve `FinalizedAt`. Changes between user
+statuses permanently set `HasBeenChanged`; late corrections remain `LATE_USER`.
+`HasBeenChanged` is application state, not a tamper-proof audit log. Response
+timestamps come from current UTC time at the CLI boundary, with no timestamp
+flag. Successful writes naturally wake the existing Sheets stream projection;
+the CLI never calls Sheets and needs no Lambda or SAM infrastructure.

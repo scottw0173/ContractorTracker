@@ -193,9 +193,10 @@ spreadsheet ID selects the existing target; it does not restrict OAuth access.
 Google sharing permissions must grant the service account access to that file.
 Client construction is offline; token acquisition occurs lazily on API use.
 
-## 2026-10-03 — Incremental manual Sheets projection
+## 2026-10-03 — Incremental Sheets projection
 
-DynamoDB remains authoritative. Manual {year, date} events read one day with
+DynamoDB remains authoritative. Stream notifications and manual {year, date}
+events read each day with
 strongly consistent GetDay and upsert it into Daily Log YYYY. Summary remains
 an existing separate worksheet; the unyearly Daily Log tab is not required.
 Yearly tabs are created on demand. Application-owned headers are initialized
@@ -204,11 +205,31 @@ than silently choosing or overwriting data. No full-year rebuild or sort occurs.
 
 RAW values retain strings, numeric fractions, and boolean flags; nil fractions
 and zero timestamps become empty cells. Present timestamps use UTC RFC3339Nano.
-Reserved concurrency of one serializes this Lambda's read-then-write upserts;
-external writers are not covered. There are no Streams or Summary formulas.
+Reserved concurrency was removed after the account rejected its reservation
+under the concurrency quota. No replacement reservation or lock is introduced.
+Default stream shard ordering does not serialize all Sheets writers: different
+shards, manual invocations, or external writers can race on tab creation/append
+or project an older read snapshot after a newer one. Manual repair remains
+available. No Summary formulas are implemented.
 
 SSM credentials are loaded on each invocation and the Google client retains
 only that invocation's context, avoiding expired contexts during token refresh.
 A retry rereads DynamoDB and locates the existing date row, including after an
 ambiguous successful append. A response updated during projection may require
-another manual invocation to refresh the projected snapshot.
+a later stream notification or manual invocation to refresh the snapshot.
+
+## 2026-10-03 — Stream notifications reread authoritative state
+
+DayTable uses KEYS_ONLY DynamoDB Streams. INSERT/MODIFY notifications supply
+only year/date; strongly consistent GetDay fetches current state before each
+UpsertDay. NewImage and OldImage never supply projected values. REMOVE is
+ignored; spreadsheet row deletion is not part of this projection contract.
+
+The SAM DynamoDB event starts at TRIM_HORIZON, batches at most 10 records,
+and keeps default per-shard parallelization. Records are processed sequentially
+within each invocation. Errors fail the whole batch and use default Lambda
+stream retry behavior; successful earlier projections can repeat on retry.
+Missing current days remain errors, consistent with the manual path. No DLQ,
+custom retry, batching delay, partial-batch response, or reconciliation is added.
+SAM supplies its standard DynamoDB stream-read execution policy; application
+GetItem remains restricted to DayTable. Manual keys remain supported for repair.

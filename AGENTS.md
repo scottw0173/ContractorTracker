@@ -79,10 +79,11 @@ Secrets and generated/local deployment files must not be committed.
 
 # High-Level Architecture
 
-There are three Lambda functions. The sheet-sync function currently has no trigger;
-manual invocation accepts {year, date}, reads that authoritative DynamoDB day,
-and incrementally upserts it into Daily Log YYYY. Summary must already exist.
-There is no DynamoDB Stream trigger or full-year reconciliation.
+There are three Lambda functions. The sheet-sync function consumes DayTable
+KEYS_ONLY stream notifications for inserts and modifications, rereads each day
+with strongly consistent GetDay, and upserts it into Daily Log YYYY. Stream
+images are never projected. Manual {year, date} invocation remains available
+for repairs/backfill. Summary must already exist; there is no full-year reconciliation.
 
 ## daily-worker
 
@@ -95,7 +96,7 @@ Responsibilities:
 3. If yesterday exists and is still `PENDING`, convert it to `NO_RESPONSE`
    using a conditional write requiring the stored status still to be `PENDING`.
    Leave missing records absent and continue after conditional conflicts.
-4. Google Sheets projection is separate and manually invoked; the daily worker
+4. Google Sheets projection is separate and stream-driven; the daily worker
    does not synchronize spreadsheets.
 5. Ensure today's record exists without replacing existing data; reread an
    existing record before deciding whether to prompt.
@@ -407,8 +408,14 @@ Weekend, Email Sent At, Responded At, Response Source, Finalized At, Changed.
 
 cmd/sheet-sync validates the positive year and exact matching ISO date before
 using the existing strongly consistent GetDay. It loads credentials and creates
-the Google client per invocation. Reserved concurrency is one to serialize
-Lambda writers. No Stream trigger, Summary formulas, or full-year sync exists.
+the Google client per invocation and reuses it across a stream batch. The SAM
+DynamoDB event uses TRIM_HORIZON and batch size 10 with default per-shard
+parallelization. INSERT/MODIFY use only validated keys; REMOVE is ignored.
+Errors fail the whole batch; no partial-batch response or custom retry is used.
+No reserved concurrency is configured because this account rejected it under
+its concurrency quota. Default shard ordering is not a global Sheets writer
+lock; concurrent shards/manual invocations can race on tab creation or append.
+No replacement lock, Summary formulas, or full-year sync exists.
 
 DynamoDB must remain authoritative.
 

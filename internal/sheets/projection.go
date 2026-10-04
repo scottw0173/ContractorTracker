@@ -38,7 +38,8 @@ func projectedTimestamp(at time.Time) string {
 
 // UpsertDay projects one authoritative record into Daily Log YYYY. Summary must
 // already exist. Header mismatches and duplicate date rows fail without replacing
-// data. Callers serialize writers; no spreadsheet data becomes business state.
+// data. Read-then-write is not atomic across concurrent writers; no spreadsheet
+// data becomes business state.
 func (c *Client) UpsertDay(ctx context.Context, record tracker.DayRecord) error {
 	values, err := projectionValues(record)
 	if err != nil {

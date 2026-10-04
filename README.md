@@ -4,8 +4,8 @@ ContractorTracker records daily contractor work status, PTO, time off, and
 non-responses. DynamoDB is authoritative. A scheduled daily Lambda finalizes
 an existing pending yesterday and sends today's SES prompt when needed.
 Signed email links open a read-only confirmation page; an explicit POST
-records the response through conditional DynamoDB updates. Manual per-date Google Sheets projection is available; automatic
-synchronization is not implemented yet.
+records the response through conditional DynamoDB updates. Google Sheets projection is driven by DynamoDB Stream notifications,
+with manual per-date repair available.
 
 ## Build and validate
 
@@ -51,10 +51,12 @@ The public Function URL uses `AuthType: NONE`; signed bearer tokens provide
 application authorization. The table is retained on stack deletion or
 replacement, so retained data will require deliberate management later.
 
-## Manual Sheets projection
+## Sheets projection and manual repair
 
-`SheetSyncFunction` accepts one `{year, date}` event and has no automatic trigger.
-It reads that DynamoDB day, decrypts `GCP-Project-Key` from SSM, and upserts the
+`SheetSyncFunction` consumes INSERT/MODIFY notifications from DayTable's
+KEYS_ONLY stream. It uses keys to strongly consistently reread current DynamoDB
+state rather than projecting stream images. REMOVE notifications are ignored.
+Manual `{year, date}` events remain available for repair/backfill. It decrypts `GCP-Project-Key` from SSM, and upserts the
 record into `Daily Log YYYY`, creating the yearly tab if needed. `Summary` must
 already exist. The unyearly `Daily Log` tab is unused. Share the spreadsheet with
 the service account with edit access beforehand. A customer-managed SSM KMS key
@@ -68,9 +70,18 @@ Date | Day | Status | Work Fraction | PTO Fraction | Weekend | Email Sent At | R
 
 Blank headers are initialized; nonblank mismatches and duplicate dates fail.
 Repeated invocation updates the same row. Unrelated rows and Summary are not
-rewritten; there is no sorting, full-year reconciliation, or Stream trigger.
-DynamoDB remains authoritative. Reserved concurrency is one; avoid simultaneous
-external edits to application-owned headers and date rows.
+rewritten; there is no sorting, full-year reconciliation, or Summary formula setup.
+DynamoDB remains authoritative. The stream starts at TRIM_HORIZON with batch
+size 10 and default per-shard parallelization. An error fails the whole batch
+for default Lambda retry; there is no partial-batch response or custom retry.
+
+Reserved concurrency is absent because the account rejected its reservation.
+Shard ordering is not a global writer lock; concurrent shards/manual invocations
+can race on tab creation or date-row append. Avoid manual invocations during
+active stream processing and concurrent external edits to application-owned
+headers/date rows. Duplicate dates fail explicitly and require manual cleanup.
+Enabling a stream does not backfill records that predate stream enablement;
+manual invocation remains available for those records.
 
 After deployment, choose a date that already exists in DynamoDB. For example:
 

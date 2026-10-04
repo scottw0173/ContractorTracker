@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -15,7 +16,7 @@ import (
 	"github.com/scottw0173/ContractorTracker/internal/tracker"
 )
 
-func newHandler(ctx context.Context) (func(context.Context, Event) error, error) {
+func newHandler(ctx context.Context) (func(context.Context, json.RawMessage) error, error) {
 	settings, err := appconfig.LoadSheets()
 	if err != nil {
 		return nil, fmt.Errorf("load Sheets settings: %w", err)
@@ -26,14 +27,18 @@ func newHandler(ctx context.Context) (func(context.Context, Event) error, error)
 	}
 	client := ssm.NewFromConfig(cfg)
 	db := store.New(dynamodb.NewFromConfig(cfg), settings.TableName)
-	return func(ctx context.Context, event Event) error {
-		return syncDay(ctx, event, db, func(ctx context.Context, record tracker.DayRecord) error {
+	return func(ctx context.Context, raw json.RawMessage) error {
+		var target *sheets.Client
+		return handleEvent(ctx, raw, db, func(ctx context.Context, record tracker.DayRecord) error {
+			if target != nil {
+				return target.UpsertDay(ctx, record)
+			}
 			credentials, err := sheets.LoadCredentials(ctx, client, settings.CredentialsParameter)
 			if err != nil {
 				return fmt.Errorf("load Sheets credentials: %w", err)
 			}
 			// Keep the Google client scoped to the invocation context, including token acquisition.
-			target, err := sheets.NewClient(ctx, credentials, settings.SpreadsheetID)
+			target, err = sheets.NewClient(ctx, credentials, settings.SpreadsheetID)
 			if err != nil {
 				return fmt.Errorf("initialize Sheets client: %w", err)
 			}

@@ -150,3 +150,36 @@ concurrency conflict -> 409; unsupported method -> 405 with Allow: GET, POST;
 internal failure -> 500. Every failure returns generic HTML and a nil Go
 error, including internal service failures, so Function URLs deliver the
 intended page. Logging remains deferred to a later integration slice.
+
+
+## 2026-10-03 — Lambda integration and builds
+
+Go entrypoints construct the SDK clients and existing services once at cold
+start. Application configuration reads environment variables without loading
+AWS configuration. Only the runtime boundary supplies time.Now. Timezone data
+is embedded so application dates do not depend on runtime zoneinfo files.
+
+Go Lambdas use provided.al2023 ZIP deployment on x86_64. The shared-module,
+two-binary project uses SAM Makefile builds producing bootstrap with
+lambda.norpc; no Docker or duplicated modules are needed.
+
+## 2026-10-03 — Initial AWS deployment choices
+
+The Function URL uses AuthType: NONE with no CORS. Signed response bearer
+tokens and explicit GET-to-POST confirmation provide application authorization;
+SAM generates the public Function URL resource policies.
+
+The shared HMAC secret is initially a required NoEcho CloudFormation parameter
+injected into both function environments. Avoiding Secrets Manager cost and
+complexity is an operational choice for this personal application, not a
+general recommendation. Secrets and samconfig.toml must never be committed.
+
+EventBridge Scheduler uses ScheduleV2 with the application timezone. The
+schedule expression is a required deployment choice, and the initial schedule
+state is DISABLED until manual testing. No DLQ, custom retries, or schedule
+group is configured. Its flexible time window is OFF.
+
+The authoritative DynamoDB table uses Retain for deletion and replacement.
+Function roles receive only their current table operations and standard Lambda
+logging. SES SendEmail is limited to the configured verified sender identity.
+The initial SES recipient defaults to the mailbox simulator, not a real inbox.

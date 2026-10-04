@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Contractor daily prompts and signed response confirmation.
+
+Parameters:
+  TokenSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Shared HMAC secret; supply privately at deployment, never commit it.
+  EmailFrom:
+    Type: String
+    MinLength: 3
+    AllowedPattern: '[^\s<>@]+@[^\s<>@]+'
+    Description: Plain SES-verified mailbox in the stack region, without a display name.
+  EmailTo:
+    Type: String
+    Default: success@simulator.amazonses.com
+    Description: Initial recipient is the SES mailbox simulator.
+  AppTimezone:
+    Type: String
+    Default: America/Mazatlan
+    Description: IANA timezone shared by the worker and scheduler.
+  DailyScheduleExpression:
+    Type: String
+    MinLength: 1
+    Description: Choose the daily Scheduler cron expression at deployment; no default time.
+  DailyScheduleState:
+    Type: String
+    AllowedValues:
+      - ENABLED
+      - DISABLED
+    Default: DISABLED
+
+Resources:
+  DayTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: year
+          AttributeType: N
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: year
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+
+  DailyWorkerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - x86_64
+      CodeUri: .
+      MemorySize: 128
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DayTable
+          TOKEN_SECRET: !Ref TokenSecret
+          APP_TIMEZONE: !Ref AppTimezone
+          RESPONSE_BASE_URL: !GetAtt StatusHandlerFunctionUrl.FunctionUrl
+          EMAIL_FROM: !Ref EmailFrom
+          EMAIL_TO: !Ref EmailTo
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt DayTable.Arn
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${EmailFrom}'
+      Events:
+        DailySchedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: !Ref DailyScheduleExpression
+            ScheduleExpressionTimezone: !Ref AppTimezone
+            State: !Ref DailyScheduleState
+            OmitName: true
+            FlexibleTimeWindow:
+              Mode: 'OFF'
+
+  StatusHandlerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - x86_64
+      CodeUri: .
+      MemorySize: 128
+      Timeout: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DayTable
+          TOKEN_SECRET: !Ref TokenSecret
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt DayTable.Arn
+
+Outputs:
+  DayTableName:
+    Description: Authoritative retained day-record table.
+    Value: !Ref DayTable
+  DailyWorkerFunctionName:
+    Description: Function name for later manual testing.
+    Value: !Ref DailyWorkerFunction
+  StatusHandlerUrl:
+    Description: Public HTTP endpoint; record operations require a valid signed token.
+    Value: !GetAtt StatusHandlerFunctionUrl.FunctionUrl
+  StatusHandlerFunctionName:
+    Description: Function name for later manual testing.
+    Value: !Ref StatusHandlerFunction

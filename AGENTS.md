@@ -62,6 +62,18 @@ Lambda deployment should use the current supported Go custom runtime approach ra
 
 Do not place the Lambda functions in a VPC unless a future dependency explicitly requires it.
 
+The integration boundary is cmd/daily-worker and cmd/status-handler. It loads
+application environment settings, then the AWS SDK v2 default configuration,
+and constructs the existing services once at cold start. Business packages
+continue to receive explicit timestamps and injected clients/dependencies.
+
+SAM uses provided.al2023, bootstrap, and x86_64 ZIP deployment with root
+Makefile targets for both functions. ScheduleV2 uses the application timezone
+and is initially disabled. The Function URL uses AuthType: NONE with signed
+bearer tokens as application authorization. The DynamoDB table is retained
+on stack deletion/replacement. The initial email recipient is the SES simulator.
+Secrets and generated/local deployment files must not be committed.
+
 ---
 
 # High-Level Architecture
@@ -79,7 +91,7 @@ Responsibilities:
 3. If yesterday exists and is still `PENDING`, convert it to `NO_RESPONSE`
    using a conditional write requiring the stored status still to be `PENDING`.
    Leave missing records absent and continue after conditional conflicts.
-4. Synchronize DynamoDB records to Google Sheets.
+4. Eventually synchronize DynamoDB records to Google Sheets (not yet implemented).
 5. Ensure today's record exists without replacing existing data; reread an
    existing record before deciding whether to prompt.
 6. Build and send today's status email only while its status is `PENDING`

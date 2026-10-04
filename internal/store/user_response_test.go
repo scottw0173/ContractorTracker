@@ -52,7 +52,7 @@ func TestUpdateUserResponse(t *testing.T) {
 						}
 						return &dynamodb.UpdateItemOutput{}, nil
 					}}
-					if updated, err := New(client, "days").UpdateUserResponseIfStatus(ctx, record, tracker.StatusPending); !updated || err != nil {
+					if updated, err := New(client, "days").UpdateUserResponseIfCurrent(ctx, record, tracker.NewPendingDay(at)); !updated || err != nil {
 						t.Fatalf("got %v, %v", updated, err)
 					}
 				})
@@ -87,7 +87,7 @@ func TestInvalidUserResponse(t *testing.T) {
 				t.Fatal("invalid record reached DynamoDB")
 				return nil, nil
 			}}
-			if updated, err := New(client, "days").UpdateUserResponseIfStatus(context.Background(), record, tracker.StatusPending); updated || err == nil {
+			if updated, err := New(client, "days").UpdateUserResponseIfCurrent(context.Background(), record, tracker.NewPendingDay(at)); updated || err == nil {
 				t.Fatal("invalid record accepted")
 			}
 		})
@@ -110,7 +110,7 @@ func TestResponseUpdateErrorsAndExpectedStatus(t *testing.T) {
 				}
 				return nil, responseErr
 			}}
-			updated, err := New(client, "days").UpdateUserResponseIfStatus(context.Background(), record, expected)
+			updated, err := New(client, "days").UpdateUserResponseIfCurrent(context.Background(), record, tracker.DayRecord{Year: record.Year, Date: record.Date, Status: expected, RespondedAt: at})
 			if updated {
 				t.Fatal("failed update reported success")
 			}
@@ -122,5 +122,66 @@ func TestResponseUpdateErrorsAndExpectedStatus(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+func TestResponseExpectedSnapshotCondition(t *testing.T) {
+	at := time.Date(2026, 10, 5, 12, 30, 45, 123456789, time.FixedZone("app", -7*3600))
+	record, err := tracker.ApplyUserStatus(tracker.NewPendingDay(at), tracker.StatusPTO, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []tracker.Status{tracker.StatusPending, tracker.StatusNoResponse, tracker.StatusFullDay, tracker.StatusHalfDay, tracker.StatusPTO, tracker.StatusTimeOff} {
+		t.Run(string(status), func(t *testing.T) {
+			expected := record
+			expected.Status, expected.RespondedAt = status, at.Add(-time.Minute)
+			client := fakeClient{update: func(_ context.Context, in *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+				want := "attribute_exists(#year) AND attribute_exists(#date) AND #status = :expected_status"
+				value, present := in.ExpressionAttributeValues[":expected_responded"]
+				if tracker.IsUserStatus(status) {
+					want += " AND #responded = :expected_responded"
+					if !reflect.DeepEqual(value, &types.AttributeValueMemberS{Value: expected.RespondedAt.Format(time.RFC3339Nano)}) {
+						t.Fatalf("expected timestamp lost precision: %v", value)
+					}
+				} else if present {
+					t.Fatal("non-user state must not condition on responded_at")
+				}
+				if aws.ToString(in.ConditionExpression) != want || in.ExpressionAttributeNames["#responded"] != "responded_at" || !reflect.DeepEqual(in.ExpressionAttributeValues[":expected_status"], &types.AttributeValueMemberS{Value: string(status)}) {
+					t.Fatal("incorrect snapshot condition")
+				}
+				return &dynamodb.UpdateItemOutput{}, nil
+			}}
+			if updated, err := New(client, "days").UpdateUserResponseIfCurrent(context.Background(), record, expected); !updated || err != nil {
+				t.Fatalf("got %v, %v", updated, err)
+			}
+		})
+	}
+}
+
+func TestInvalidExpectedResponseSnapshot(t *testing.T) {
+	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	record, err := tracker.ApplyUserStatus(tracker.NewPendingDay(at), tracker.StatusFullDay, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*tracker.DayRecord)
+	}{
+		{"year mismatch", func(r *tracker.DayRecord) { r.Year++ }},
+		{"date mismatch", func(r *tracker.DayRecord) { r.Date = "2026-10-06" }},
+		{"zero user timestamp", func(r *tracker.DayRecord) { r.RespondedAt = time.Time{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expected := record
+			tc.mutate(&expected)
+			client := fakeClient{update: func(context.Context, *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+				t.Fatal("invalid expected snapshot reached DynamoDB")
+				return nil, nil
+			}}
+			if updated, err := New(client, "days").UpdateUserResponseIfCurrent(context.Background(), record, expected); updated || err == nil {
+				t.Fatal("invalid snapshot accepted")
+			}
+		})
 	}
 }

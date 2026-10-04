@@ -25,7 +25,7 @@ type TokenVerifier interface {
 // DayStore requires consistent reads and narrow conditional response writes.
 type DayStore interface {
 	GetDay(context.Context, int, string) (tracker.DayRecord, bool, error)
-	UpdateUserResponseIfStatus(context.Context, tracker.DayRecord, tracker.Status) (bool, error)
+	UpdateUserResponseIfCurrent(context.Context, tracker.DayRecord, tracker.DayRecord) (bool, error)
 }
 
 type Service struct {
@@ -134,7 +134,7 @@ func (s *Service) Submit(ctx context.Context, rawToken string, now time.Time) (t
 		if err != nil {
 			return tracker.DayRecord{}, fmt.Errorf("apply response %s: %w", claims.Date, err)
 		}
-		saved, err := s.store.UpdateUserResponseIfStatus(ctx, updated, current.Status)
+		saved, err := s.store.UpdateUserResponseIfCurrent(ctx, updated, current)
 		if err != nil {
 			return tracker.DayRecord{}, fmt.Errorf("save response %s (attempt %d): %w", claims.Date, attempt, err)
 		}

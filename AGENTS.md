@@ -120,9 +120,18 @@ The response handler should allow:
 
 Response preview is read-only. Submission updates only response attributes
 with a conditional UpdateItem requiring an existing day and unchanged status.
+For an expected user response, RespondedAt must also match the read snapshot
+to reject stale metadata after a status changes away and back.
 It rereads and reapplies on conflict, up to three total attempts. Repeated
 selections retain RespondedAt; email/finalization timestamps and date metadata
 are preserved independently.
+
+The respondweb adapter uses AWS Function URL event types. GET only previews
+and renders an escaped confirmation form. POST submits exactly one bearer
+token from a bounded application/x-www-form-urlencoded body, including
+base64-encoded event bodies. Forms post to the current local path without
+query parameters. Pages use no-store, no-referrer, nosniff, and a restrictive
+CSP; success and error pages contain no token or internal error details.
 
 ---
 

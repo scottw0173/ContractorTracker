@@ -114,10 +114,39 @@ timestamps, weekend information, and date metadata remain untouched.
 Submission verifies the token once, then makes at most three consistent
 read/apply/conditional-update attempts. Conflicts trigger rereading so
 finalization races become late responses and concurrent corrections retain
-correction semantics. Status-only conditions do not detect a change away
-from and back to the same status between a read and write.
+correction semantics. Response writes always condition on the expected status;
+expected user responses also require the expected RespondedAt, serialized as
+RFC3339Nano. This prevents change-away-and-back ABA sequences with changed
+response timestamps from accepting stale metadata. PENDING and NO_RESPONSE
+require only the status comparison. No general version attribute is needed.
+This assumes distinct response timestamps for actual transitions; timestamp
+collisions do not distinguish otherwise matching states.
 
 Repeating a response still performs a conditional update, but leaves the
 original RespondedAt and correction flag unchanged. Returned records are
 applied read snapshots; unrelated concurrent attributes may be newer in
 persistence. Preview is read-only and never mutates a record.
+
+
+## 2026-10-03 — HTTP response confirmation
+
+Email-link GET requests are always read-only and render confirmation; only
+an explicit POST calls submission. The bearer token is a hidden form field
+in an application/x-www-form-urlencoded body, never in the form action URL.
+Forms use the current local request path without query parameters. No
+redirects or external resources are used. Dynamic content uses html/template.
+
+POST accepts one non-empty token, rejects duplicate token fields, ignores
+unrelated form fields, and limits decoded form bodies to 16 KiB. Function
+URL base64 bodies are decoded before parsing. Unsupported or malformed
+Content-Type headers return 415; malformed form data returns 400.
+
+Pages use Cache-Control: no-store, Referrer-Policy: no-referrer, nosniff,
+and a restrictive CSP with same-origin form actions because GET links carry
+bearer capabilities. Tokens appear only in the confirmation's hidden field.
+
+HTTP mapping: invalid input/token -> 400; missing record -> 404; exhausted
+concurrency conflict -> 409; unsupported method -> 405 with Allow: GET, POST;
+internal failure -> 500. Every failure returns generic HTML and a nil Go
+error, including internal service failures, so Function URLs deliver the
+intended page. Logging remains deferred to a later integration slice.

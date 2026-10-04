@@ -33,16 +33,16 @@ func (s *fakeStore) GetDay(_ context.Context, year int, date string) (tracker.Da
 	}
 	return s.record, s.exists, s.getErr
 }
-func (s *fakeStore) UpdateUserResponseIfStatus(_ context.Context, r tracker.DayRecord, expected tracker.Status) (bool, error) {
+func (s *fakeStore) UpdateUserResponseIfCurrent(_ context.Context, r tracker.DayRecord, expected tracker.DayRecord) (bool, error) {
 	s.writes++
-	s.expected = append(s.expected, expected)
+	s.expected = append(s.expected, expected.Status)
 	if s.updateErr != nil {
 		return false, s.updateErr
 	}
 	if s.beforeUpdate != nil {
 		s.beforeUpdate(s)
 	}
-	if s.conflict || !s.exists || s.record.Status != expected {
+	if s.conflict || !s.exists || s.record.Status != expected.Status || (tracker.IsUserStatus(expected.Status) && !s.record.RespondedAt.Equal(expected.RespondedAt)) {
 		return false, nil
 	}
 	// Mirror the narrow write: preserve unrelated fields from current persistence.
@@ -305,5 +305,35 @@ func TestServiceErrors(t *testing.T) {
 	}
 	if service, err := New(s, nil); service != nil || err == nil {
 		t.Fatal("nil verifier accepted")
+	}
+}
+
+func TestRepeatedResponseABA(t *testing.T) {
+	service, s, v, now := setup(t, tracker.StatusFullDay)
+	original := s.record
+	t2, t3 := now.Add(-30*time.Minute).UTC(), now.Add(-15*time.Minute).UTC()
+	s.beforeUpdate = func(s *fakeStore) {
+		if s.writes != 1 {
+			return
+		}
+		var err error
+		s.record, err = tracker.ApplyUserStatus(s.record, tracker.StatusPTO, t2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.record, err = tracker.ApplyUserStatus(s.record, tracker.StatusFullDay, t3)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := service.Submit(context.Background(), signed(t, v, tracker.StatusFullDay), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.reads != 2 || s.writes != 2 || v.calls != 1 {
+		t.Fatalf("expected two read/write attempts and one verification: reads=%d writes=%d verifies=%d", s.reads, s.writes, v.calls)
+	}
+	if got.Status != tracker.StatusFullDay || got.RespondedAt != t3 || !got.HasBeenChanged || got.RespondedAt.Equal(original.RespondedAt) || !reflect.DeepEqual(got, s.record) {
+		t.Fatalf("stale repeated response restored metadata: %+v", got)
 	}
 }

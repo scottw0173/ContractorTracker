@@ -3,6 +3,7 @@ module github.com/scottw0173/ContractorTracker
 go 1.25.5
 
 require (
+	github.com/aws/aws-lambda-go v1.54.0
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.21.8
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.70.0

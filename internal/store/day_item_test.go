@@ -113,3 +113,33 @@ func TestMalformedTimestamps(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminBackfillRoundTrip(t *testing.T) {
+	day := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
+	at := day.Add(12 * time.Hour)
+	for _, status := range []tracker.Status{tracker.StatusFullDay, tracker.StatusHalfDay, tracker.StatusPTO, tracker.StatusTimeOff} {
+		t.Run(string(status), func(t *testing.T) {
+			record, err := tracker.NewAdminBackfillDay(day, status, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item, err := marshalDay(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"email_sent_at", "finalized_at"} {
+				if _, exists := item[key]; exists {
+					t.Fatalf("fabricated %s", key)
+				}
+			}
+			source, ok := item["response_source"].(*types.AttributeValueMemberS)
+			if !ok || source.Value != "ADMIN_BACKFILL" {
+				t.Fatal("backfill provenance not persisted")
+			}
+			got, err := unmarshalDay(item)
+			if err != nil || !reflect.DeepEqual(got, record) {
+				t.Fatalf("round trip: %+v %v", got, err)
+			}
+		})
+	}
+}

@@ -152,6 +152,27 @@ base64-encoded event bodies. Forms post to the current local path without
 query parameters. Pages use no-store, no-referrer, nosniff, and a restrictive
 CSP; success and error pages contain no token or internal error details.
 
+## Local administrative backfill
+
+Use cmd/admin-backfill to create a missing historical authoritative day, not to
+correct an existing day or merely repair a Sheets projection. Validate required
+--table/--year/--date/--status and reject positional arguments. Read through the
+existing strongly consistent GetDay; existing records block creation and direct
+the operator to admin-correct. Preview the final record and require exact y/yes
+(case-insensitive) before conditional CreateDay. A concurrent insert prevents
+creation; no overwrite or correction retry is attempted.
+
+tracker.NewAdminBackfillDay reuses NewPendingDay and ApplyUserStatus to derive
+calendar/weekend and status/fraction values. Backfills have ADMIN_BACKFILL source,
+false HasBeenChanged, UTC administrative entry time in RespondedAt, and zero
+EmailSentAt/FinalizedAt. They do not fabricate historical email-response times.
+Later different-status corrections use normal transition/source semantics;
+same-status administrative corrections do not write. The existing DynamoDB
+Stream projects successful INSERTs without direct Sheets calls. Use existing
+local AWS credentials; no new configuration, Lambda, or SAM resource is needed.
+Direct manual construction/editing of DynamoDB business fields is unsupported.
+The manual SheetSync repair path remains separate and available.
+
 ## Local administrative corrections
 
 Use cmd/admin-correct for administrative business-state corrections rather than
@@ -305,6 +326,7 @@ Allowed response sources:
 USER
 LATE_USER
 AUTO_FINALIZE
+ADMIN_BACKFILL
 ```
 
 Expected meanings:
@@ -317,6 +339,10 @@ Expected meanings:
 
 `AUTO_FINALIZE`
 : The daily worker found a previous `PENDING` record and automatically changed it to `NO_RESPONSE`.
+
+`ADMIN_BACKFILL`
+: A missing historical day reconstructed through admin-backfill. RespondedAt is
+  administrative entry time; no email or finalization event is fabricated.
 
 If a user corrects an existing user-selected value, it remains a user-originated response.
 
@@ -518,6 +544,9 @@ The project may evolve, but prefer approximately:
 
 ```text
 cmd/
+    admin-backfill/
+        main.go
+
     admin-correct/
         main.go
 

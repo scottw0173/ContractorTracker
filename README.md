@@ -206,3 +206,53 @@ statuses permanently set `HasBeenChanged`; late corrections remain `LATE_USER`.
 timestamps come from current UTC time at the CLI boundary, with no timestamp
 flag. Successful writes naturally wake the existing Sheets stream projection;
 the CLI never calls Sheets and needs no Lambda or SAM infrastructure.
+
+## Creating missing historical days
+
+Use `cmd/admin-backfill` to create a day that is missing from authoritative
+DynamoDB. Use `admin-correct` to change an existing day; manual SheetSync
+invocation only repairs a projection and does not create authoritative records.
+Direct manual construction/editing of DynamoDB business fields is unsupported.
+
+```sh
+go run ./cmd/admin-backfill \
+  --table "$TABLE_NAME" \
+  --year 2026 \
+  --date 2026-10-01 \
+  --status FULL_DAY
+```
+
+Set TABLE_NAME to the deployed table name and choose the known status from
+FULL_DAY, HALF_DAY, PTO, or TIME_OFF. All four flags are required; positional
+arguments are rejected. The command uses the standard AWS SDK v2 credential
+chain, requiring the operator's existing table GetItem and PutItem permissions.
+No new SAM/IAM resource, token, Google credential, or direct Sheets call is used.
+
+The CLI strongly reads the day, previews Date, Status, Work Fraction, PTO Fraction,
+Weekend, Response Source, and Responded At, then asks
+`Create this historical record? [y/N]`. Only exact y/yes (case-insensitive)
+confirms; every other answer cancels without writing. An existing record blocks
+creation and directs you to admin-correct. If another actor creates the item
+before confirmation completes, conditional CreateDay reports that it now exists
+without overwriting it. There is no retry that converts creation into correction.
+
+The pure domain helper sets normal status/fraction values and calendar weekend
+context, source ADMIN_BACKFILL, HasBeenChanged=false, and the current UTC
+administrative entry time in RespondedAt. EmailSentAt and FinalizedAt remain
+zero; no historical email-response time is invented. Different-status corrections
+later set HasBeenChanged and use normal response-source rules; a same-status
+admin-correct request remains a no-op. The existing DynamoDB Stream automatically
+projects successful backfill INSERTs to Sheets. Manual SheetSync repair remains
+available separately.
+
+Once each status is known, set STATUS_2026_10_01, STATUS_2026_10_02, and
+STATUS_2026_10_04 to one of the four allowed values, then run each separately:
+
+```sh
+go run ./cmd/admin-backfill --table "$TABLE_NAME" --year 2026 --date 2026-10-01 --status "$STATUS_2026_10_01"
+go run ./cmd/admin-backfill --table "$TABLE_NAME" --year 2026 --date 2026-10-02 --status "$STATUS_2026_10_02"
+go run ./cmd/admin-backfill --table "$TABLE_NAME" --year 2026 --date 2026-10-04 --status "$STATUS_2026_10_04"
+```
+
+Review and confirm each preview independently. An unset status or table variable
+fails validation before loading AWS configuration or making storage calls.

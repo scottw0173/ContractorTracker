@@ -17,9 +17,10 @@ const (
 type ResponseSource string
 
 const (
-	ResponseSourceUser         ResponseSource = "USER"
-	ResponseSourceLateUser     ResponseSource = "LATE_USER"
-	ResponseSourceAutoFinalize ResponseSource = "AUTO_FINALIZE"
+	ResponseSourceUser          ResponseSource = "USER"
+	ResponseSourceLateUser      ResponseSource = "LATE_USER"
+	ResponseSourceAutoFinalize  ResponseSource = "AUTO_FINALIZE"
+	ResponseSourceAdminBackfill ResponseSource = "ADMIN_BACKFILL"
 )
 
 // DayRecord describes one calendar day. Zero timestamps mean the event has

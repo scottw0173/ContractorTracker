@@ -303,3 +303,21 @@ writes. B3 is user-controlled; unrelated cells remain untouched. One batch appli
 narrow value, validation, and formatting changes; repeats only repair differences
 and auto-size columns. Summary follows successful Daily Log upserts, so dashboard
 failures leave authoritative projection rows intact for retry/manual repair.
+
+## 2026-10-04 — Missing historical days use administrative backfill
+
+The local admin-backfill CLI creates only absent authoritative days, using the
+pure NewAdminBackfillDay helper and existing conditional CreateDay. A strong
+initial read blocks existing records, and the conditional create protects races.
+Preview and exact y/yes confirmation are required; no overwrite or live write
+is implied by implementation/testing. Existing days use admin-correct instead.
+Direct DynamoDB business-field construction/editing remains unsupported.
+
+ADMIN_BACKFILL distinguishes reconstructed history from email responses.
+RespondedAt records the current UTC administrative entry time; EmailSentAt and
+FinalizedAt remain zero, and HasBeenChanged starts false. Normal domain rules
+supply fractions and weekend context. Later different-status corrections set
+HasBeenChanged and use normal USER/LATE_USER rules; same-status administrative
+corrections remain no-ops. Successful INSERTs use the existing Stream projection;
+manual SheetSync is still a separate projection-repair path. No infrastructure
+or administrative public endpoint is introduced.

@@ -257,3 +257,30 @@ func TestCorrectionsBetweenUserStatuses(t *testing.T) {
 		}
 	})
 }
+
+func TestCorrectAdministrativeBackfill(t *testing.T) {
+	for _, same := range []bool{false, true} {
+		t.Run(map[bool]string{false: "change", true: "same status"}[same], func(t *testing.T) {
+			record, err := tracker.NewAdminBackfillDay(time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC), tracker.StatusPTO, testNow.Add(-time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f := &fakeStore{record: record, exists: true}
+			target := tracker.StatusFullDay
+			if same {
+				target = tracker.StatusPTO
+			}
+			err = correctDay(context.Background(), f, validOptions(target), strings.NewReader("y\n"), io.Discard, testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if same {
+				if f.writes != 0 || !reflect.DeepEqual(f.record, record) {
+					t.Fatal("same-status correction rewrote backfill")
+				}
+			} else if f.writes != 1 || !f.record.HasBeenChanged || f.record.ResponseSource != tracker.ResponseSourceUser || !f.record.RespondedAt.Equal(testNow) || !reflect.DeepEqual(f.expected[0], record) {
+				t.Fatalf("unexpected backfill correction: %+v", f)
+			}
+		})
+	}
+}

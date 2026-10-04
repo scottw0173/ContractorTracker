@@ -1,3 +1,6 @@
 .aws-sam/
 bootstrap
 samconfig.toml
+
+/sam-installation/
+/aws-sam-cli-linux-x86_64.zip*

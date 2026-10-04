@@ -102,3 +102,22 @@ Delivery remains at-least-once. Concurrent daily workers can both send before
 either persists EmailSentAt. This small residual duplicate-delivery possibility
 is accepted instead of adding a distributed claim or locking protocol.
 Timestamp conditional conflicts are expected and complete the run successfully.
+
+
+## 2026-10-03 — Narrow conditional user responses
+
+User responses use conditional DynamoDB UpdateItem rather than replacing
+whole records. Only status, work_fraction, pto_fraction, responded_at,
+response_source, and has_been_changed change. Email timestamps, finalization
+timestamps, weekend information, and date metadata remain untouched.
+
+Submission verifies the token once, then makes at most three consistent
+read/apply/conditional-update attempts. Conflicts trigger rereading so
+finalization races become late responses and concurrent corrections retain
+correction semantics. Status-only conditions do not detect a change away
+from and back to the same status between a read and write.
+
+Repeating a response still performs a conditional update, but leaves the
+original RespondedAt and correction flag unchanged. Returned records are
+applied read snapshots; unrelated concurrent attributes may be newer in
+persistence. Preview is read-only and never mutates a record.

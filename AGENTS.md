@@ -118,6 +118,12 @@ The response handler should allow:
 - correcting a previous user response;
 - repeated/idempotent submission of the same status.
 
+Response preview is read-only. Submission updates only response attributes
+with a conditional UpdateItem requiring an existing day and unchanged status.
+It rereads and reapplies on conflict, up to three total attempts. Repeated
+selections retain RespondedAt; email/finalization timestamps and date metadata
+are preserved independently.
+
 ---
 
 # Application Timezone

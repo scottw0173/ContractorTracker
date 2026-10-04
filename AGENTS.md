@@ -93,9 +93,11 @@ to main rebuild and deploy noninteractively to contractor-tracker in us-east-2.
 GitHub OIDC trust uses the exact immutable subject
 repo:scottw0173@156988004/ContractorTracker@1403695477:ref:refs/heads/main
 and audience sts.amazonaws.com. Only deploy requests id-token: write.
-Repository Variables AWS_DEPLOY_ROLE_ARN, EMAIL_FROM and EMAIL_TO are validated
-without printing values. Variables are not masked; email-only Secrets references
-are an optional privacy choice. No AWS access keys are stored in GitHub.
+Repository Variable AWS_DEPLOY_ROLE_ARN and repository Secrets EMAIL_FROM and
+EMAIL_TO are validated without printing values. Emails are configuration rather
+than credentials, but Secrets provide masking in public Actions logs. They are
+step-level env only during validation/deployment, not job-level configuration.
+No AWS access keys are stored in GitHub.
 
 infra/github-actions-bootstrap.yaml is independent of the application stack:
 optional GitHub provider creation/reuse, private retained artifact bucket, OIDC
@@ -104,7 +106,11 @@ operate only the app stack, and pass only the execution role. Execution manages
 only current app services and generated role patterns, excluding bootstrap IAM.
 CreateEventSourceMapping requires Resource "*" but is function-ARN conditioned.
 No deployment, external setup or repository-settings mutation is implied by
-editing these files; the operator performs bootstrap and Variables setup.
+editing these files; the operator performs bootstrap and Variable/Secrets setup.
+CloudFormation's execution role also needs CreateChangeSet on the exact SAM
+transform ARN because SAM processing runs under that service role. The first
+OIDC attempt proved configuration validation, assumption and CI build, but
+failed specifically at transform processing due to this missing permission.
 
 ---
 

@@ -381,8 +381,24 @@ CreateEventSourceMapping is the only Resource "*" grant because the API cannot
 be resource-scoped; its FunctionArn condition still limits creation to SheetSync.
 
 Stable non-sensitive SAM settings are committed; EmailFrom/EmailTo have no
-defaults and come from external GitHub configuration Variables. Values are
-validated without echoing them; SAM deployment output is suppressed because
-it prints parameter overrides. Variables themselves are not log-masked.
+defaults and come from GitHub repository Secrets, while AWS_DEPLOY_ROLE_ARN
+remains a Variable. Emails are configuration, but Secrets mask them in public
+Actions logs. They are step-level inputs, not job-level environment values.
+Validation does not echo values; SAM output remains suppressed because it prints
+parameter overrides.
 No account role/bucket or secret values are saved in samconfig.toml.
 Default rollback is retained; empty deployments succeed without prompts.
+
+
+## 2026-10-04 — SAM service-role authorization and email log privacy
+
+The first OIDC deployment proved configuration validation, AWS role assumption,
+and CI SAM build, then failed during SAM processing after change-set creation.
+CloudFormation's execution role needs CreateChangeSet on the exact regional
+Serverless-2016-10-31 transform ARN; caller permission alone is insufficient.
+Add only that scoped permission, preserving all existing IAM boundaries.
+
+Job-level email Variables appeared in public Actions logs despite suppressing
+SAM output. EMAIL_FROM/EMAIL_TO now require repository Secrets and are passed
+only to validation/deployment steps so GitHub masks their values. They remain
+configuration rather than credentials; AWS_DEPLOY_ROLE_ARN stays a Variable.

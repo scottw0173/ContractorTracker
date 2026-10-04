@@ -53,13 +53,13 @@ func TestWorkflowCredentialBoundary(t *testing.T) {
 	}
 	verify := templateBlock(t, text, "jobs", "verify")
 	deploy := templateBlock(t, text, "jobs", "deploy")
-	for _, forbidden := range []string{"id-token:", "configure-aws-credentials", "vars.EMAIL", "role-to-assume", "sam deploy"} {
+	for _, forbidden := range []string{"id-token:", "configure-aws-credentials", "vars.EMAIL", "secrets.EMAIL", "role-to-assume", "sam deploy"} {
 		if strings.Contains(verify, forbidden) {
 			t.Fatalf("verify has credential/deployment access: %s", forbidden)
 		}
 	}
 	requireTemplateText(t, verify, "go-version-file: go.mod", "gofmt -l", "go test ./...", "git diff --check", "sam validate --lint", "sam build --build-in-source")
-	requireTemplateText(t, deploy, "needs: verify", "if: github.event_name == 'push' && github.ref == 'refs/heads/main'", "id-token: write", "contents: read", "vars.AWS_DEPLOY_ROLE_ARN", "vars.EMAIL_FROM", "vars.EMAIL_TO", "aws-actions/configure-aws-credentials@", "aws sts get-caller-identity", "sam build --build-in-source", "--s3-bucket", "--role-arn", "--no-confirm-changeset", "--no-fail-on-empty-changeset", `"EmailFrom=$EMAIL_FROM" "EmailTo=$EMAIL_TO"`, "Missing repository variable %s")
+	requireTemplateText(t, deploy, "needs: verify", "if: github.event_name == 'push' && github.ref == 'refs/heads/main'", "id-token: write", "contents: read", "vars.AWS_DEPLOY_ROLE_ARN", "secrets.EMAIL_FROM", "secrets.EMAIL_TO", "aws-actions/configure-aws-credentials@", "aws sts get-caller-identity", "sam build --build-in-source", "--s3-bucket", "--role-arn", "--no-confirm-changeset", "--no-fail-on-empty-changeset", `"EmailFrom=$EMAIL_FROM" "EmailTo=$EMAIL_TO"`, "Missing repository variable AWS_DEPLOY_ROLE_ARN", "Missing repository secret %s")
 	if strings.Count(text, "id-token: write") != 1 {
 		t.Fatal("OIDC permission must be deploy-only")
 	}
@@ -106,4 +106,85 @@ func TestBootstrapTrustAndSeparation(t *testing.T) {
 	requireTemplateText(t, bucket, "BlockPublicAcls: true", "IgnorePublicAcls: true", "BlockPublicPolicy: true", "RestrictPublicBuckets: true", "SSEAlgorithm: AES256")
 	outputs := templateBlock(t, text, "Outputs")
 	requireTemplateText(t, outputs, "GitHubDeployRoleArn:", "CloudFormationExecutionRoleArn:", "ArtifactBucketName:")
+}
+
+func TestExecutionRoleSAMTransformPermission(t *testing.T) {
+	text := readDeploymentFile(t, "infra/github-actions-bootstrap.yaml")
+	execution := templateBlock(t, text, "Resources", "CloudFormationExecutionRole")
+	parts := strings.Split(execution, "- Sid: AllowSAMTransform")
+	if len(parts) != 2 {
+		t.Fatal("execution role requires exactly one SAM transform statement")
+	}
+	statement := strings.SplitN(parts[1], "- Sid:", 2)[0]
+	requireTemplateText(t, statement, "Effect: Allow", "Action: cloudformation:CreateChangeSet",
+		"Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'")
+	if strings.Contains(statement, "*") || strings.Count(statement, "Action:") != 1 || strings.Count(statement, "Resource:") != 1 {
+		t.Fatal("SAM transform grant must be narrowly scoped")
+	}
+	// No other CloudFormation administration is authorized in this execution role.
+	if strings.Count(execution, "Action: cloudformation:") != 1 {
+		t.Fatal("unexpected execution-role CloudFormation permissions")
+	}
+}
+
+func TestWorkflowStepSecretsAndPrivateValidation(t *testing.T) {
+	text := readDeploymentFile(t, ".github/workflows/ci-deploy.yml")
+	deploy := templateBlock(t, text, "jobs", "deploy")
+	env := templateBlock(t, text, "jobs", "deploy", "env")
+	if strings.Contains(env, "EMAIL_") || strings.Contains(text, "vars.EMAIL_FROM") || strings.Contains(text, "vars.EMAIL_TO") {
+		t.Fatal("email values must not be job-level env or Variables")
+	}
+	requireTemplateText(t, env, "vars.AWS_DEPLOY_ROLE_ARN")
+	for _, name := range []string{"Validate repository configuration", "Deploy"} {
+		parts := strings.SplitN(deploy, "- name: "+name+"\n", 2)
+		if len(parts) != 2 {
+			t.Fatalf("missing step %s", name)
+		}
+		step := strings.SplitN(parts[1], "      - ", 2)[0]
+		requireTemplateText(t, step, "env:", "EMAIL_FROM: ${{ secrets.EMAIL_FROM }}", "EMAIL_TO: ${{ secrets.EMAIL_TO }}")
+	}
+	// Execute the actual validation run block offline, using opaque fixture values.
+	start := strings.Index(deploy, "- name: Validate repository configuration")
+	block := strings.SplitN(deploy[start:], "run: |\n", 2)[1]
+	block = strings.SplitN(block, "      - ", 2)[0]
+	var script strings.Builder
+	for _, line := range strings.Split(block, "\n") {
+		script.WriteString(strings.TrimPrefix(line, "          "))
+		script.WriteByte('\n')
+	}
+	fixtures := map[string]string{
+		"AWS_DEPLOY_ROLE_ARN": "role-fixture",
+		"EMAIL_FROM":          "private-from-fixture",
+		"EMAIL_TO":            "private-to-fixture",
+	}
+	for _, missing := range []string{"", "AWS_DEPLOY_ROLE_ARN", "EMAIL_FROM", "EMAIL_TO"} {
+		for _, blank := range []string{"", " \t\n"} {
+			cmd := exec.Command("bash", "-e", "-c", script.String())
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+			for name, value := range fixtures {
+				if name == missing {
+					value = blank
+				}
+				cmd.Env = append(cmd.Env, name+"="+value)
+			}
+			output, err := cmd.CombinedOutput()
+			if strings.Contains(string(output), fixtures["EMAIL_FROM"]) || strings.Contains(string(output), fixtures["EMAIL_TO"]) {
+				t.Fatal("validation leaked fixture secret")
+			}
+			if missing == "" {
+				if err != nil || len(output) != 0 {
+					t.Fatalf("valid configuration failed: %s (%v)", output, err)
+				}
+				continue
+			}
+			kind := "secret"
+			if missing == "AWS_DEPLOY_ROLE_ARN" {
+				kind = "variable"
+			}
+			want := "::error::Missing repository " + kind + " " + missing + "\n"
+			if err == nil || string(output) != want {
+				t.Fatalf("missing %s: output=%q error=%v", missing, output, err)
+			}
+		}
+	}
 }

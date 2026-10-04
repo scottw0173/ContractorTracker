@@ -92,20 +92,20 @@ aws cloudformation describe-stacks --region us-east-2 \
   --query 'Stacks[0].Outputs'
 ```
 
-In GitHub, open Repository → Settings → Secrets and variables → Actions →
-Variables and create:
+In GitHub, open Repository → Settings → Secrets and variables → Actions.
+Under Variables, create AWS_DEPLOY_ROLE_ARN using the GitHubDeployRoleArn output.
+Under Secrets, create:
 
-- AWS_DEPLOY_ROLE_ARN: the GitHubDeployRoleArn output.
 - EMAIL_FROM: the plain verified SES sending mailbox.
 - EMAIL_TO: the intended recipient mailbox.
 
-Keep the existing SSM secrets, SES identities, and Google spreadsheet access.
-No external configuration is created automatically by this code. GitHub Variables
-are non-secret and not log-masked. The workflow does not echo email values and
-suppresses SAM output because SAM prints parameter overrides. GitHub may still
-display environment configuration in workflow logs. To hide the email addresses,
-store only EMAIL_FROM/EMAIL_TO as GitHub Secrets and change their two vars
-references to secrets references; the application architecture stays the same.
+The email addresses are deployment configuration rather than credentials, but
+repository Secrets are required so GitHub masks them in public Actions logs.
+They are passed only to the validation/deployment steps, never job-level env.
+Missing configuration fails without displaying values. SAM output remains
+suppressed because it prints parameter overrides. Remove the old email Variables
+after creating the Secrets. Keep existing SSM secrets, SES identities, and Google
+spreadsheet access. No external configuration is changed by this code.
 Do not store AWS access keys in GitHub.
 
 Bootstrap outputs also include CloudFormationExecutionRoleArn and ArtifactBucketName.
@@ -139,6 +139,14 @@ The GitHub role can list/read/write only its artifact bucket/prefix, create/insp
 execute/delete change sets for contractor-tracker, use the SAM transform, and pass
 only contractor-tracker-cloudformation-execution to CloudFormation. It cannot
 directly administer Lambda, DynamoDB, or application IAM roles.
+
+The first OIDC deployment proved repository configuration validation, role
+assumption, and CI SAM build work. Change-set creation succeeded, but SAM
+processing failed because the CloudFormation execution role lacked
+CreateChangeSet on the SAM transform ARN. Both deployment roles now have that
+exact transform permission: CloudFormation processes SAM under its service role,
+so permission on the GitHub caller alone is insufficient. Update the independent
+bootstrap stack before retrying deployment; this code does not deploy it.
 
 The CloudFormation execution role manages the three app functions and their URL/
 permissions, the SheetSync stream mapping, the retained day table/stream, the

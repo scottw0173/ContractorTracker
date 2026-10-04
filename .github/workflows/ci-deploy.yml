@@ -52,16 +52,21 @@ jobs:
     env:
       AWS_REGION: us-east-2
       AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-      EMAIL_FROM: ${{ vars.EMAIL_FROM }}
-      EMAIL_TO: ${{ vars.EMAIL_TO }}
     steps:
       - name: Validate repository configuration
         shell: bash
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
-          for name in AWS_DEPLOY_ROLE_ARN EMAIL_FROM EMAIL_TO; do
+          if [[ -z "${AWS_DEPLOY_ROLE_ARN//[[:space:]]/}" ]]; then
+            printf '::error::Missing repository variable AWS_DEPLOY_ROLE_ARN\n'
+            exit 1
+          fi
+          for name in EMAIL_FROM EMAIL_TO; do
             value="${!name}"
             if [[ -z "${value//[[:space:]]/}" ]]; then
-              printf '::error::Missing repository variable %s\n' "$name"
+              printf '::error::Missing repository secret %s\n' "$name"
               exit 1
             fi
           done
@@ -84,6 +89,9 @@ jobs:
         run: sam build --build-in-source
       - name: Deploy
         shell: bash
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           account_id=$(aws sts get-caller-identity --query Account --output text)
           execution_role="arn:aws:iam::${account_id}:role/contractor-tracker-cloudformation-execution"

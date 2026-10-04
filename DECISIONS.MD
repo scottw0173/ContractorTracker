@@ -68,3 +68,22 @@ Token contents are signed but not encrypted. The signature protects the
 date/status from modification without the secret; it neither hides the
 contents nor authenticates a human identity. Treat tokens as bearer
 capabilities: anyone possessing a valid token can present its signed claims.
+
+## 2026-10-03 — Email response URL policy
+
+The email builder accepts absolute HTTP(S) response URLs, preserves paths
+and unrelated query parameters, and rejects credentials, fragments, and
+preexisting token/date/status parameters. Each choice adds only its signed
+token as authorization and selection input. Production links should use HTTPS.
+
+## 2026-10-03 — Email delivery ordering
+
+Future daily orchestration will send the SES email first, then persist
+EmailSentAt. This provides at-least-once delivery: a crash after SES accepts
+the email but before the timestamp is saved may cause a duplicate on retry.
+That is preferable to saving the timestamp first and suppressing the only
+prompt if sending fails. SES acceptance does not guarantee inbox delivery.
+
+Future EmailSentAt persistence must update only the timestamp attribute,
+not replace the entire DayRecord, so a rapid concurrent user response is
+not overwritten. This storage operation is not implemented yet.

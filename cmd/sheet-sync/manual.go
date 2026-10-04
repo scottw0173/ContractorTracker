@@ -19,9 +19,8 @@ type dayReader interface {
 }
 
 func syncDay(ctx context.Context, event Event, db dayReader, project func(context.Context, tracker.DayRecord) error) error {
-	date, err := time.Parse(time.DateOnly, event.Date)
-	if err != nil || date.Format(time.DateOnly) != event.Date || event.Year <= 0 || date.Year() != event.Year {
-		return fmt.Errorf("invalid projection event year/date: %d/%q", event.Year, event.Date)
+	if err := event.validate(); err != nil {
+		return err
 	}
 	record, exists, err := db.GetDay(ctx, event.Year, event.Date)
 	if err != nil {
@@ -35,6 +34,14 @@ func syncDay(ctx context.Context, event Event, db dayReader, project func(contex
 	}
 	if err := project(ctx, record); err != nil {
 		return fmt.Errorf("project day %s: %w", event.Date, err)
+	}
+	return nil
+}
+
+func (event Event) validate() error {
+	date, err := time.Parse(time.DateOnly, event.Date)
+	if err != nil || date.Format(time.DateOnly) != event.Date || event.Year <= 0 || date.Year() != event.Year {
+		return fmt.Errorf("invalid projection event year/date: %d/%q", event.Year, event.Date)
 	}
 	return nil
 }

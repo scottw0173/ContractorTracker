@@ -127,11 +127,46 @@ Resources:
                 - dynamodb:UpdateItem
               Resource: !GetAtt DayTable.Arn
 
+  # Explicit role keeps SAM's stream event from adding broad managed DynamoDB access.
+  SheetSyncFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: SheetSyncAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/GCP-Project-Key'
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt DayTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                Resource: !GetAtt DayTable.StreamArn
+              - Effect: Allow
+                Action: dynamodb:ListStreams
+                Resource: !Sub '${DayTable.Arn}/stream/*'
+
   SheetSyncFunction:
     Type: AWS::Serverless::Function
     Metadata:
       BuildMethod: makefile
     Properties:
+      Role: !GetAtt SheetSyncFunctionRole.Arn
       Runtime: provided.al2023
       Handler: bootstrap
       Architectures:
@@ -144,18 +179,6 @@ Resources:
           TABLE_NAME: !Ref DayTable
           GOOGLE_CREDENTIALS_PARAMETER: GCP-Project-Key
           GOOGLE_SPREADSHEET_ID: 1Zl7Mjou5FyFQHQmVd13B7du7KMvHOhx5HKp1FkXELPc
-      Policies:
-        - AWSLambdaBasicExecutionRole
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - ssm:GetParameter
-              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/GCP-Project-Key'
-            - Effect: Allow
-              Action: dynamodb:GetItem
-              Resource: !GetAtt DayTable.Arn
-
       Events:
         DayChanges:
           Type: DynamoDB

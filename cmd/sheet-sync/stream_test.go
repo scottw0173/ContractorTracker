@@ -47,13 +47,12 @@ func (s *sequenceDays) GetDay(ctx context.Context, year int, date string) (track
 	return record, true, nil
 }
 
-func TestStreamRereadsEveryAffectedKey(t *testing.T) {
+func TestStreamDeduplicatesInFirstSeenOrder(t *testing.T) {
 	type contextKey struct{}
 	ctx := context.WithValue(context.Background(), contextKey{}, "stream")
 	current := []tracker.DayRecord{
 		{Year: 2026, Date: "2026-10-03", Status: tracker.StatusPTO, PTOFraction: 1, HasBeenChanged: true},
 		{Year: 2027, Date: "2027-01-01", Status: tracker.StatusFullDay},
-		{Year: 2026, Date: "2026-10-03", Status: tracker.StatusHalfDay, HasBeenChanged: true},
 	}
 	db := &sequenceDays{records: current}
 	raw := streamPayload(t, streamNotification("INSERT", "2026", "2026-10-03"), streamNotification("MODIFY", "2027", "2027-01-01"), streamNotification("MODIFY", "2026", "2026-10-03"))
@@ -65,8 +64,8 @@ func TestStreamRereadsEveryAffectedKey(t *testing.T) {
 		projected = append(projected, record)
 		return nil
 	})
-	wantKeys := []Event{{Year: 2026, Date: "2026-10-03"}, {Year: 2027, Date: "2027-01-01"}, {Year: 2026, Date: "2026-10-03"}}
-	if err != nil || db.calls != 3 || db.ctx != ctx || !reflect.DeepEqual(db.keys, wantKeys) || !reflect.DeepEqual(projected, current) {
+	wantKeys := []Event{{Year: 2026, Date: "2026-10-03"}, {Year: 2027, Date: "2027-01-01"}}
+	if err != nil || db.calls != 2 || db.ctx != ctx || !reflect.DeepEqual(db.keys, wantKeys) || !reflect.DeepEqual(projected, current) {
 		t.Fatalf("error=%v keys=%v projected=%v", err, db.keys, projected)
 	}
 }
@@ -205,5 +204,45 @@ func TestStreamFailureAfterSuccessfulRecord(t *testing.T) {
 	})
 	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "stream record 1") || db.calls != 2 || calls != 2 {
 		t.Fatalf("error=%v reads=%d projections=%d", err, db.calls, calls)
+	}
+}
+
+func TestStreamRepeatedKeysSyncOncePerInvocation(t *testing.T) {
+	for _, names := range [][]string{
+		{"INSERT", "INSERT", "INSERT"},
+		{"MODIFY", "MODIFY", "MODIFY"},
+		{"INSERT", "MODIFY", "MODIFY"},
+		{"REMOVE", "INSERT", "REMOVE", "MODIFY", "REMOVE"},
+	} {
+		t.Run(strings.Join(names, "-"), func(t *testing.T) {
+			notifications := make([]map[string]interface{}, 0, len(names))
+			for _, name := range names {
+				notifications = append(notifications, streamNotification(name, "2026", "2026-10-03"))
+			}
+			db := &fakeDays{exists: true, record: tracker.DayRecord{Year: 2026, Date: "2026-10-03", Status: tracker.StatusPTO}}
+			projects := 0
+			raw := streamPayload(t, notifications...)
+			for invocation := 1; invocation <= 2; invocation++ {
+				err := handleEvent(context.Background(), raw, db, func(context.Context, tracker.DayRecord) error { projects++; return nil })
+				if err != nil || db.calls != invocation || projects != invocation {
+					t.Fatalf("invocation=%d error=%v reads=%d projects=%d", invocation, err, db.calls, projects)
+				}
+			}
+		})
+	}
+}
+
+func TestStreamValidatesWholeBatchBeforeSync(t *testing.T) {
+	raw := streamPayload(t,
+		streamNotification("INSERT", "2026", "2026-10-03"),
+		streamNotification("MODIFY", "2026", "2026-10-03"),
+		streamNotification("MODIFY", "2026", "2027-01-01"))
+	db := &fakeDays{}
+	err := handleEvent(context.Background(), raw, db, func(context.Context, tracker.DayRecord) error {
+		t.Fatal("invalid batch must not project any key")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "stream record 2 keys") || db.calls != 0 {
+		t.Fatalf("error=%v reads=%d", err, db.calls)
 	}
 }

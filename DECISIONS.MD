@@ -226,10 +226,16 @@ UpsertDay. NewImage and OldImage never supply projected values. REMOVE is
 ignored; spreadsheet row deletion is not part of this projection contract.
 
 The SAM DynamoDB event starts at TRIM_HORIZON, batches at most 10 records,
-and keeps default per-shard parallelization. Records are processed sequentially
-within each invocation. Errors fail the whole batch and use default Lambda
-stream retry behavior; successful earlier projections can repeat on retry.
+and keeps default per-shard parallelization. Validate all INSERT/MODIFY keys
+before any synchronization, then deduplicate per invocation in first-seen order.
+Each unique key runs GetDay -> UpsertDay once, sequentially. There is no
+persistent deduplication state; later invocations reread current state. Errors
+fail the whole batch and use default Lambda stream retry behavior; successful earlier projections can repeat on retry.
 Missing current days remain errors, consistent with the manual path. No DLQ,
 custom retry, batching delay, partial-batch response, or reconciliation is added.
-SAM supplies its standard DynamoDB stream-read execution policy; application
-GetItem remains restricted to DayTable. Manual keys remain supported for repair.
+Stream polling permissions are explicit in SheetSyncFunctionRole: DescribeStream,
+GetRecords, and GetShardIterator on DayTable.StreamArn, and ListStreams on the
+DayTable stream ARN pattern. GetItem remains a separate table-only statement.
+Supplying an explicit role prevents SAM's generated role from attaching the
+broad AWSLambdaDynamoDBExecutionRole policy. The logical ID matches SAM's
+previous generated role. Manual keys remain supported for repair.

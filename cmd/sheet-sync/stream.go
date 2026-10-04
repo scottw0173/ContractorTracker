@@ -41,6 +41,11 @@ func handleEvent(ctx context.Context, raw json.RawMessage, db dayReader, project
 	if string(records) == "null" || batch.Records == nil {
 		return fmt.Errorf("DynamoDB stream Records must be an array")
 	}
+	// Validate the complete batch before synchronization. Deduplication is local
+	// to this invocation; the slice retains deterministic first-seen order.
+	seen := make(map[Event]bool)
+	var keys []Event
+	var firstRecords []int
 	for i, record := range batch.Records {
 		if record.EventSource != "aws:dynamodb" {
 			return fmt.Errorf("stream record %d has unsupported event source %q", i, record.EventSource)
@@ -56,8 +61,18 @@ func handleEvent(ctx context.Context, raw json.RawMessage, db dayReader, project
 		if err != nil {
 			return fmt.Errorf("stream record %d keys: %w", i, err)
 		}
+		if err := key.validate(); err != nil {
+			return fmt.Errorf("stream record %d keys: %w", i, err)
+		}
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+			firstRecords = append(firstRecords, i)
+		}
+	}
+	for i, key := range keys {
 		if err := syncDay(ctx, key, db, project); err != nil {
-			return fmt.Errorf("stream record %d: %w", i, err)
+			return fmt.Errorf("stream record %d: %w", firstRecords[i], err)
 		}
 	}
 	return nil

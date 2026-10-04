@@ -55,7 +55,9 @@ replacement, so retained data will require deliberate management later.
 
 `SheetSyncFunction` consumes INSERT/MODIFY notifications from DayTable's
 KEYS_ONLY stream. It uses keys to strongly consistently reread current DynamoDB
-state rather than projecting stream images. REMOVE notifications are ignored.
+state rather than projecting stream images. INSERT/MODIFY keys are validated
+and deduplicated in first-seen order within each invocation before each unique
+key runs GetDay -> UpsertDay. REMOVE notifications are ignored.
 Manual `{year, date}` events remain available for repair/backfill. It decrypts `GCP-Project-Key` from SSM, and upserts the
 record into `Daily Log YYYY`, creating the yearly tab if needed. `Summary` must
 already exist. The unyearly `Daily Log` tab is unused. Share the spreadsheet with
@@ -74,6 +76,8 @@ rewritten; there is no sorting, full-year reconciliation, or Summary formula set
 DynamoDB remains authoritative. The stream starts at TRIM_HORIZON with batch
 size 10 and default per-shard parallelization. An error fails the whole batch
 for default Lambda retry; there is no partial-batch response or custom retry.
+The function uses an explicit role with narrowly scoped inline stream-read
+permissions, separate table GetItem permission, and no managed DynamoDB policy.
 
 Reserved concurrency is absent because the account rejected its reservation.
 Shard ordering is not a global writer lock; concurrent shards/manual invocations

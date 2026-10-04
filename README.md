@@ -10,7 +10,7 @@ with manual per-date repair available.
 ## Build and validate
 
 Prerequisites: Go 1.25.5 or newer, Make, AWS SAM CLI, and AWS CLI credentials
-for the eventual deployment. The sending mailbox must be a verified SES
+for deployment. The sending mailbox must be a verified SES
 identity in the same AWS region where the stack will be deployed.
 
 ```sh
@@ -24,28 +24,53 @@ SAM uses the root Makefile to build three Linux amd64 binaries named
 No Docker build is required. Configuration is read at cold start; execution
 roles and the standard AWS SDK configuration chain supply AWS settings.
 
-## First deployment settings
+## Production configuration
 
-No AWS deployment has been performed as part of implementation. For the
-first deployment, supply the required `EmailFrom`, `TokenSecret`, and
-`DailyScheduleExpression` parameters. Use a plain SES-verified sending
-mailbox without a display name. Choose the actual schedule time yourself;
-`cron(0 9 * * ? *)` is only an example, not the project's chosen time.
-`AppTimezone` defaults to `America/Mazatlan` for both calendar dates and
-schedule evaluation.
+The full production path has been successfully tested end-to-end. There are
+three Lambda binaries plus the local admin-correct/admin-backfill CLIs.
+Use a plain SES-verified EmailFrom mailbox in the stack region and preserve the
+configured production EmailTo recipient. Delivery to a real recipient still
+requires verification while SES is in the sandbox unless production access has
+been granted.
 
-`EmailTo` defaults to `success@simulator.amazonses.com`. `DailyScheduleState`
-defaults to `DISABLED`; leave it disabled until manual end-to-end testing is
-complete. Delivery to a real recipient requires recipient verification while
-the SES account is in the sandbox, unless it has production access.
+The production schedule defaults to `cron(0 6 * * ? *)`, timezone
+`America/Mazatlan`, and state `ENABLED`: every day at 6:00 AM application local
+time. DailyScheduleExpression, AppTimezone, and DailyScheduleState remain
+parameter overrides.
 
-Generate a strong random token secret locally with a cryptographically secure
-tool, for example `openssl rand -hex 32`, and supply it privately at deployment.
-Do not commit the secret or `samconfig.toml`; guided SAM deployment may save
-parameter overrides there. The parameter is `NoEcho`, but the secret is still
-in both Lambda environments and must be protected through AWS access control.
-This environment-based secret storage is a deliberate choice for this personal
-application rather than a general recommendation.
+TokenSecretParameter defaults to `CT-TokenSecret`, an existing SSM parameter
+expected to be SecureString in the stack's region. Each daily-worker and
+status-handler cold start retrieves it once with decryption, using the execution
+role. Their environments contain only TOKEN_SECRET_PARAMETER; they do not read
+TOKEN_SECRET. The secret value is not a CloudFormation deployment parameter and
+must not be supplied to sam deploy, committed, printed, or logged.
+
+Preserve the existing secret byte-for-byte, including any whitespace, so old
+signed links remain valid. This changes retrieval only, not HMAC, token format,
+or expiration. Warm execution environments retain the cold-start secret; changing
+it is not a coordinated rotation mechanism. Production expects normal SSM-managed
+SecureString encryption. A future customer-managed KMS key would need narrowly
+scoped kms:Decrypt permissions and its key policy; no broad KMS access is added.
+
+For the next deployment (not performed in this slice):
+
+1. Verify CT-TokenSecret exists as SecureString in the deployment region without
+   displaying its value. Keep the same existing production secret.
+2. Remove the old TokenSecret override from deployment commands and private
+   samconfig.toml. Keep secret material and samconfig.toml out of Git.
+3. Preserve existing stack/mailbox settings and explicitly supply
+   TokenSecretParameter=CT-TokenSecret, DailyScheduleExpression="cron(0 6 * * ? *)",
+   AppTimezone=America/Mazatlan, and DailyScheduleState=ENABLED. Existing stack or
+   guided-deployment overrides can otherwise preserve old disabled/time values.
+4. Review the change set for removal of TOKEN_SECRET, addition of the name-only
+   environment setting, and each function's scoped SSM GetParameter permission.
+5. After deployment, open an old email link to GET its confirmation page without
+   submitting it. This safely checks cold-start retrieval and unchanged signing
+   compatibility. Check startup logs without printing SDK causes or secret values.
+6. To manually smoke-test the worker, first verify today's record has already
+   responded or been emailed if you want to avoid another prompt. Its normal
+   finalization/send behavior is unchanged. Verify the deployed schedule state,
+   timezone, and expression, then observe the next 6:00 AM run.
 
 The public Function URL uses `AuthType: NONE`; signed bearer tokens provide
 application authorization. The table is retained on stack deletion or
@@ -162,8 +187,8 @@ Formatting and year validation use narrow, repeat-safe updates. Summary updates
 follow a successful Daily Log write: a Summary failure does not undo that row,
 and manual invocation or stream retry can finish dashboard initialization.
 
-For a safe first live test, save a copy of the existing workbook and inspect the
-owned cells above for incompatible content before deploying. Invoke SheetSync
+For a safe dashboard regression test, save a copy of the existing workbook and
+inspect the owned cells above for incompatible content before deploying. Invoke SheetSync
 with an existing 2026 DynamoDB date using the command above. Confirm no
 FunctionError, B3=2026, correct formula results (no formula errors), current-date
 status, monthly totals, and sorted PTO dates. Compare headline sums/counts with

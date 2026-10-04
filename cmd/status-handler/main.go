@@ -10,9 +10,11 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	appconfig "github.com/scottw0173/ContractorTracker/internal/config"
 	"github.com/scottw0173/ContractorTracker/internal/respond"
 	"github.com/scottw0173/ContractorTracker/internal/respondweb"
+	"github.com/scottw0173/ContractorTracker/internal/ssmsecret"
 	"github.com/scottw0173/ContractorTracker/internal/store"
 	"github.com/scottw0173/ContractorTracker/internal/token"
 )
@@ -26,8 +28,15 @@ func newHandler(ctx context.Context) (*respondweb.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load AWS configuration: %w", err)
 	}
-	db := store.New(dynamodb.NewFromConfig(cfg), settings.TableName)
-	signer, err := token.New(settings.TokenSecret)
+	return buildHandler(ctx, settings, store.New(dynamodb.NewFromConfig(cfg), settings.TableName), ssm.NewFromConfig(cfg))
+}
+
+func buildHandler(ctx context.Context, settings appconfig.Status, db respond.DayStore, parameters ssmsecret.Client) (*respondweb.Handler, error) {
+	secret, err := ssmsecret.Load(ctx, parameters, settings.TokenSecretParameter)
+	if err != nil {
+		return nil, fmt.Errorf("load token secret: %w", err)
+	}
+	signer, err := token.New(secret)
 	if err != nil {
 		return nil, fmt.Errorf("create signer: %w", err)
 	}

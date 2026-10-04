@@ -3,11 +3,11 @@ Transform: AWS::Serverless-2016-10-31
 Description: Contractor daily prompts and signed response confirmation.
 
 Parameters:
-  TokenSecret:
+  TokenSecretParameter:
     Type: String
-    NoEcho: true
-    MinLength: 32
-    Description: Shared HMAC secret; supply privately at deployment, never commit it.
+    Default: CT-TokenSecret
+    AllowedPattern: '[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*'
+    Description: SSM parameter name (without leading slash) containing the shared HMAC token secret.
   EmailFrom:
     Type: String
     MinLength: 3
@@ -16,7 +16,7 @@ Parameters:
   EmailTo:
     Type: String
     Default: sweeps5937@gmail.com
-    Description: Initial recipient is the SES mailbox simulator.
+    Description: Recipient mailbox for daily status prompts.
   AppTimezone:
     Type: String
     Default: America/Mazatlan
@@ -24,13 +24,14 @@ Parameters:
   DailyScheduleExpression:
     Type: String
     MinLength: 1
-    Description: Choose the daily Scheduler cron expression at deployment; no default time.
+    Default: cron(0 6 * * ? *)
+    Description: Daily 6 AM schedule in AppTimezone; overrideable at deployment.
   DailyScheduleState:
     Type: String
     AllowedValues:
       - ENABLED
       - DISABLED
-    Default: DISABLED
+    Default: ENABLED
 
 Resources:
   DayTable:
@@ -67,7 +68,7 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DayTable
-          TOKEN_SECRET: !Ref TokenSecret
+          TOKEN_SECRET_PARAMETER: !Ref TokenSecretParameter
           APP_TIMEZONE: !Ref AppTimezone
           RESPONSE_BASE_URL: !GetAtt StatusHandlerFunctionUrl.FunctionUrl
           EMAIL_FROM: !Ref EmailFrom
@@ -76,6 +77,9 @@ Resources:
         - AWSLambdaBasicExecutionRole
         - Version: '2012-10-17'
           Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${TokenSecretParameter}'
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -113,7 +117,7 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DayTable
-          TOKEN_SECRET: !Ref TokenSecret
+          TOKEN_SECRET_PARAMETER: !Ref TokenSecretParameter
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: BUFFERED
@@ -121,6 +125,9 @@ Resources:
         - AWSLambdaBasicExecutionRole
         - Version: '2012-10-17'
           Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${TokenSecretParameter}'
             - Effect: Allow
               Action:
                 - dynamodb:GetItem

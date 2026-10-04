@@ -70,9 +70,19 @@ continue to receive explicit timestamps and injected clients/dependencies.
 
 SAM uses provided.al2023, bootstrap, and x86_64 ZIP deployment with root
 Makefile targets for all three functions. ScheduleV2 uses the application timezone
-and is initially disabled. The Function URL uses AuthType: NONE with signed
+and defaults to ENABLED at 6:00 AM America/Mazatlan. The Function URL uses AuthType: NONE with signed
 bearer tokens as application authorization. The DynamoDB table is retained
-on stack deletion/replacement. The initial email recipient is the SES simulator.
+on stack deletion/replacement. The production path has been proven end-to-end.
+Daily/status config carries TOKEN_SECRET_PARAMETER, defaulted by SAM to the
+existing CT-TokenSecret SecureString parameter. These two entrypoints retrieve
+and decrypt the value once at cold start using internal/ssmsecret, then construct
+the existing token signer. No TOKEN_SECRET environment or secret-value
+CloudFormation parameter remains. Preserve the existing bytes so old links stay
+valid. Both roles get only ssm:GetParameter on that configured parameter; a future
+customer-managed KMS key additionally needs scoped kms:Decrypt. Displayed loader
+errors hide SDK error text; unwrapped causes must not be logged. The Google
+credential loader remains independent, with per-invocation retrieval unchanged.
+
 Secrets and generated/local deployment files must not be committed.
 
 ---

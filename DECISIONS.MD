@@ -160,8 +160,9 @@ AWS configuration. Only the runtime boundary supplies time.Now. Timezone data
 is embedded so application dates do not depend on runtime zoneinfo files.
 
 Go Lambdas use provided.al2023 ZIP deployment on x86_64. The shared-module,
-two-binary project uses SAM Makefile builds producing bootstrap with
-lambda.norpc; no Docker or duplicated modules are needed.
+three-Lambda-binary project uses SAM Makefile builds producing bootstrap with
+lambda.norpc; local admin CLIs remain separate. No Docker or duplicated modules
+are needed.
 
 ## 2026-10-03 — Initial AWS deployment choices
 
@@ -169,20 +170,22 @@ The Function URL uses AuthType: NONE with no CORS. Signed response bearer
 tokens and explicit GET-to-POST confirmation provide application authorization;
 SAM generates the public Function URL resource policies.
 
-The shared HMAC secret is initially a required NoEcho CloudFormation parameter
-injected into both function environments. Avoiding Secrets Manager cost and
-complexity is an operational choice for this personal application, not a
-general recommendation. Secrets and samconfig.toml must never be committed.
+The shared HMAC secret is retrieved from the existing CT-TokenSecret SSM
+SecureString parameter once per daily/status cold start with decryption. Only
+the configurable parameter name is passed through CloudFormation/Lambda settings;
+secret values and private deployment files must never be committed or logged.
+No Secrets Manager dependency is introduced.
 
-EventBridge Scheduler uses ScheduleV2 with the application timezone. The
-schedule expression is a required deployment choice, and the initial schedule
-state is DISABLED until manual testing. No DLQ, custom retries, or schedule
-group is configured. Its flexible time window is OFF.
+EventBridge Scheduler uses ScheduleV2 with the application timezone. The proven
+production default is cron(0 6 * * ? *) at 6:00 AM America/Mazatlan, ENABLED.
+Expression, timezone, and state remain overrideable. No DLQ, custom retries,
+or schedule group is configured; its flexible time window is OFF.
 
 The authoritative DynamoDB table uses Retain for deletion and replacement.
 Function roles receive only their current table operations and standard Lambda
 logging. SES SendEmail is limited to the configured verified sender identity.
-The initial SES recipient defaults to the mailbox simulator, not a real inbox.
+The configured production SES recipient is preserved; the full production path
+has now been tested end-to-end.
 
 
 ## 2026-10-03 — Google Sheets authorization boundary
@@ -321,3 +324,24 @@ HasBeenChanged and use normal USER/LATE_USER rules; same-status administrative
 corrections remain no-ops. Successful INSERTs use the existing Stream projection;
 manual SheetSync is still a separate projection-repair path. No infrastructure
 or administrative public endpoint is introduced.
+
+## 2026-10-04 — Token-secret SSM retrieval
+
+A neutral internal/ssmsecret loader owns only GetParameter with decryption and
+nonblank confidential bytes. Google credentials remain in their existing loader.
+Daily/status config requires TOKEN_SECRET_PARAMETER and ignores TOKEN_SECRET;
+AWS retrieval occurs only at cold start, before token.New, never per request.
+Exact bytes are preserved so old signed links verify with the unchanged secret.
+
+SSM errors retain typed causes for errors.Is/errors.As but display generic text,
+preventing arbitrary SDK error text from leaking into initialization logs. Never
+log an explicitly unwrapped retrieval cause. Missing output/parameter/value,
+blank values, nil clients, and blank names fail initialization.
+
+CloudFormation accepts TokenSecretParameter (default CT-TokenSecret), not a
+secret-value parameter. Each role grants GetParameter on that exact parameter
+ARN only. Production expects SecureString with normal SSM-managed encryption;
+a future customer-managed KMS key would need narrowly scoped Decrypt/key access.
+Warm environments keep their initialized secret, so this is not a rotation
+protocol. Saved deployment overrides must remove the old TokenSecret setting
+and explicitly select the enabled 6 AM production schedule when updating a stack.

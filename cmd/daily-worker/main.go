@@ -10,9 +10,11 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	appconfig "github.com/scottw0173/ContractorTracker/internal/config"
 	"github.com/scottw0173/ContractorTracker/internal/daily"
 	"github.com/scottw0173/ContractorTracker/internal/email"
+	"github.com/scottw0173/ContractorTracker/internal/ssmsecret"
 	"github.com/scottw0173/ContractorTracker/internal/store"
 	"github.com/scottw0173/ContractorTracker/internal/token"
 )
@@ -26,8 +28,15 @@ func newRunner(ctx context.Context) (*daily.Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load AWS configuration: %w", err)
 	}
-	db := store.New(dynamodb.NewFromConfig(cfg), settings.TableName)
-	signer, err := token.New(settings.TokenSecret)
+	return buildRunner(ctx, settings, store.New(dynamodb.NewFromConfig(cfg), settings.TableName), sesv2.NewFromConfig(cfg), ssm.NewFromConfig(cfg))
+}
+
+func buildRunner(ctx context.Context, settings appconfig.Daily, db daily.DayStore, ses email.SESClient, parameters ssmsecret.Client) (*daily.Runner, error) {
+	secret, err := ssmsecret.Load(ctx, parameters, settings.TokenSecretParameter)
+	if err != nil {
+		return nil, fmt.Errorf("load token secret: %w", err)
+	}
+	signer, err := token.New(secret)
 	if err != nil {
 		return nil, fmt.Errorf("create signer: %w", err)
 	}
@@ -35,7 +44,7 @@ func newRunner(ctx context.Context) (*daily.Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create email builder: %w", err)
 	}
-	sender, err := email.NewSender(sesv2.NewFromConfig(cfg), settings.EmailFrom, settings.EmailTo)
+	sender, err := email.NewSender(ses, settings.EmailFrom, settings.EmailTo)
 	if err != nil {
 		return nil, fmt.Errorf("create email sender: %w", err)
 	}

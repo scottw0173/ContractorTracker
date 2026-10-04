@@ -10,7 +10,7 @@ func TestLoadSheets(t *testing.T) {
 	t.Setenv("TABLE_NAME", "test-table")
 	t.Setenv("GOOGLE_CREDENTIALS_PARAMETER", "test-google-key")
 	t.Setenv("GOOGLE_SPREADSHEET_ID", "test-spreadsheet-id")
-	for _, key := range []string{"TOKEN_SECRET", "APP_TIMEZONE", "RESPONSE_BASE_URL", "EMAIL_FROM", "EMAIL_TO"} {
+	for _, key := range []string{"TOKEN_SECRET_PARAMETER", "TOKEN_SECRET", "APP_TIMEZONE", "RESPONSE_BASE_URL", "EMAIL_FROM", "EMAIL_TO"} {
 		t.Setenv(key, "")
 	}
 	got, err := LoadSheets()

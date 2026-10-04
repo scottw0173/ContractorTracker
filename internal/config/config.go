@@ -11,17 +11,17 @@ import (
 )
 
 type Daily struct {
-	TableName       string
-	TokenSecret     []byte
-	Location        *time.Location
-	ResponseBaseURL string
-	EmailFrom       string
-	EmailTo         string
+	TableName            string
+	TokenSecretParameter string
+	Location             *time.Location
+	ResponseBaseURL      string
+	EmailFrom            string
+	EmailTo              string
 }
 
 type Status struct {
-	TableName   string
-	TokenSecret []byte
+	TableName            string
+	TokenSecretParameter string
 }
 
 func required(name string) (string, error) {
@@ -29,7 +29,7 @@ func required(name string) (string, error) {
 	if strings.TrimSpace(value) == "" {
 		return "", fmt.Errorf("%s must not be missing or blank", name)
 	}
-	// Preserve the original value, especially secrets; only blankness is checked.
+	// Preserve the original setting; only blankness is checked.
 	return value, nil
 }
 
@@ -38,11 +38,11 @@ func LoadStatus() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	secret, err := required("TOKEN_SECRET")
+	parameter, err := required("TOKEN_SECRET_PARAMETER")
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{TableName: table, TokenSecret: []byte(secret)}, nil
+	return Status{TableName: table, TokenSecretParameter: parameter}, nil
 }
 
 func LoadDaily() (Daily, error) {
@@ -70,5 +70,5 @@ func LoadDaily() (Daily, error) {
 	if err != nil {
 		return Daily{}, err
 	}
-	return Daily{TableName: status.TableName, TokenSecret: status.TokenSecret, Location: location, ResponseBaseURL: base, EmailFrom: from, EmailTo: to}, nil
+	return Daily{TableName: status.TableName, TokenSecretParameter: status.TokenSecretParameter, Location: location, ResponseBaseURL: base, EmailFrom: from, EmailTo: to}, nil
 }

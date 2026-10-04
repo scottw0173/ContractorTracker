@@ -1,5 +1,5 @@
 // Package sheets loads service-account credentials and constructs Google Sheets
-// clients. It does not synchronize, inspect, or mutate spreadsheets.
+// clients. It does not synchronize or mutate spreadsheets.
 package sheets
 
 import (

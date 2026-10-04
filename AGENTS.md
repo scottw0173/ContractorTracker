@@ -62,13 +62,14 @@ Lambda deployment should use the current supported Go custom runtime approach ra
 
 Do not place the Lambda functions in a VPC unless a future dependency explicitly requires it.
 
-The integration boundary is cmd/daily-worker and cmd/status-handler. It loads
+The integration boundary is cmd/daily-worker, cmd/status-handler, and cmd/sheet-sync. It loads
 application environment settings, then the AWS SDK v2 default configuration,
-and constructs the existing services once at cold start. Business packages
+and constructs AWS clients once at cold start. The sheet-sync Google client
+is constructed per invocation with freshly loaded SSM credentials. Business packages
 continue to receive explicit timestamps and injected clients/dependencies.
 
 SAM uses provided.al2023, bootstrap, and x86_64 ZIP deployment with root
-Makefile targets for both functions. ScheduleV2 uses the application timezone
+Makefile targets for all three functions. ScheduleV2 uses the application timezone
 and is initially disabled. The Function URL uses AuthType: NONE with signed
 bearer tokens as application authorization. The DynamoDB table is retained
 on stack deletion/replacement. The initial email recipient is the SES simulator.
@@ -78,7 +79,9 @@ Secrets and generated/local deployment files must not be committed.
 
 # High-Level Architecture
 
-There are two Lambda functions.
+There are three Lambda functions. The sheet-sync function currently has no trigger;
+manual invocation loads SSM credentials and verifies Daily Log and Summary using
+a read-only spreadsheet metadata request. It does not synchronize or write data.
 
 ## daily-worker
 
@@ -385,12 +388,15 @@ The reporting layer can interpret weekend and weekday non-responses differently 
 
 Google Sheets is a reporting projection, not the database.
 
-internal/sheets provides credential loading and client construction only.
+internal/sheets provides credential loading, client construction, and a read-only
+metadata check for the existing Daily Log and Summary worksheets.
 GOOGLE_CREDENTIALS_PARAMETER and GOOGLE_SPREADSHEET_ID select the SSM parameter
 and existing target. Credentials are decrypted from Parameter Store and used
 for service-account authentication with the Sheets read/write scope, without
 Drive access or default credential discovery. No spreadsheet synchronization,
-worksheet setup, or Lambda integration is implemented by this plumbing.
+worksheet setup, or DynamoDB Stream integration is implemented. cmd/sheet-sync
+performs only the metadata check on manual invocation, loading credentials and
+constructing its Google client with the invocation context.
 
 DynamoDB must remain authoritative.
 
@@ -457,6 +463,9 @@ cmd/
         main.go
 
     status-handler/
+        main.go
+
+    sheet-sync/
         main.go
 
 internal/

@@ -125,6 +125,31 @@ Resources:
                 - dynamodb:UpdateItem
               Resource: !GetAtt DayTable.Arn
 
+  SheetSyncFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - x86_64
+      CodeUri: .
+      MemorySize: 128
+      Timeout: 30
+      Environment:
+        Variables:
+          GOOGLE_CREDENTIALS_PARAMETER: GCP-Project-Key
+          GOOGLE_SPREADSHEET_ID: 1Zl7Mjou5FyFQHQmVd13B7du7KMvHOhx5HKp1FkXELPc
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/GCP-Project-Key'
+
 Outputs:
   DayTableName:
     Description: Authoritative retained day-record table.
@@ -138,3 +163,6 @@ Outputs:
   StatusHandlerFunctionName:
     Description: Function name for later manual testing.
     Value: !Ref StatusHandlerFunction
+  SheetSyncFunctionName:
+    Description: Manually invoked read-only spreadsheet metadata check.
+    Value: !Ref SheetSyncFunction

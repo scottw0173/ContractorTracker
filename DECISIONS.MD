@@ -192,3 +192,11 @@ with only the spreadsheets read/write OAuth scope and no Drive scope. The
 spreadsheet ID selects the existing target; it does not restrict OAuth access.
 Google sharing permissions must grant the service account access to that file.
 Client construction is offline; token acquisition occurs lazily on API use.
+
+## 2026-10-03 — Manual Sheets integration check
+
+The sheet-sync Lambda initially has no automatic trigger and performs only a
+metadata GET, requiring the existing Daily Log and Summary worksheets. It loads
+SSM credentials on each invocation and scopes the Google client to that
+invocation's context so token acquisition cannot retain an expired invocation
+context. No spreadsheet writes or DynamoDB Stream processing are enabled.

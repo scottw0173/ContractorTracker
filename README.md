@@ -19,7 +19,7 @@ sam validate --lint
 sam build
 ```
 
-SAM uses the root Makefile to build two Linux amd64 binaries named
+SAM uses the root Makefile to build three Linux amd64 binaries named
 `bootstrap`, using `lambda.norpc`, for ZIP deployment on `provided.al2023`.
 No Docker build is required. Configuration is read at cold start; execution
 roles and the standard AWS SDK configuration chain supply AWS settings.
@@ -50,3 +50,14 @@ application rather than a general recommendation.
 The public Function URL uses `AuthType: NONE`; signed bearer tokens provide
 application authorization. The table is retained on stack deletion or
 replacement, so retained data will require deliberate management later.
+
+## Manual Sheets metadata check
+
+`SheetSyncFunction` has no automatic trigger. On manual invocation it decrypts
+`GCP-Project-Key` from SSM, authenticates as the service account, and reads only
+spreadsheet metadata to require the existing `Daily Log` and `Summary` tabs.
+The spreadsheet and parameter are configured through its environment variables
+in `template.yaml`. Share the spreadsheet with the service account beforehand.
+No cells, tabs, or formulas are changed; synchronization is still deferred.
+If the SSM SecureString uses a customer-managed KMS key, its role will also need
+scoped `kms:Decrypt` permission for that key before invocation.

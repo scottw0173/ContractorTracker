@@ -258,3 +258,18 @@ loop is separate from signed submission, which intentionally still conditionally
 writes repeated responses. Domain logic and persistence expressions stay shared.
 Successful DynamoDB corrections use the existing Stream projection; no direct
 Sheets calls, administrative public endpoint, or new IAM/SAM resources are added.
+
+## 2026-10-04 — Yearly Daily Log presentation
+
+Each projected yearly tab has row 1 frozen, row banding covering A1:K370,
+and A:K auto-sized after successful row writes. Existing covering bands,
+including larger ranges and their colors, remain untouched; yearly tabs need
+not share a palette. Missing banding uses subdued defaults. A partial overlapping
+band returns an error for manual adjustment rather than modifying existing
+formatting or introducing another overlapping band. Summary is unaffected.
+
+Metadata reads request only sheet identity, frozen row count, and band ranges,
+without grid cell data. Each invocation checks presentation again, so retries
+can finish initialization after an accepted request with a lost response without
+adding another band. Formatting is presentation only, never authoritative state.
+Existing cross-writer races remain; this adds no locking mechanism.

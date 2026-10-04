@@ -32,7 +32,7 @@ func TestVerifyWorksheets(t *testing.T) {
 				if r.Method != http.MethodGet || r.URL.Path != "/v4/spreadsheets/test-id" {
 					t.Fatal("expected read-only metadata request to configured spreadsheet")
 				}
-				if r.URL.Query().Get("includeGridData") != "false" || r.URL.Query().Get("fields") != "sheets.properties.title" {
+				if r.URL.Query().Get("includeGridData") != "false" || r.URL.Query().Get("fields") != worksheetMetadataFields {
 					t.Fatal("request should fetch only worksheet titles, without grid data")
 				}
 				if r.Context().Value(contextKey{}) != "invocation" {

@@ -25,6 +25,8 @@ type sheetFixture struct {
 	header                                  []interface{}
 	rows                                    [][]interface{}
 	creates, headerWrites, updates, appends int
+	sheets                                  map[string]*googlesheets.Sheet
+	freezeUpdates, bandAdds, resizeCalls    int
 	updatedRange                            string
 	failStage                               string
 	failure                                 error
@@ -39,6 +41,16 @@ func (f *sheetFixture) client() *Client {
 	return &Client{Service: service, SpreadsheetID: "test-id"}
 }
 
+func (f *sheetFixture) sheet(title string) *googlesheets.Sheet {
+	if f.sheets == nil {
+		f.sheets = make(map[string]*googlesheets.Sheet)
+	}
+	if f.sheets[title] == nil {
+		f.sheets[title] = &googlesheets.Sheet{Properties: &googlesheets.SheetProperties{Title: title, SheetId: int64(len(f.sheets)), GridProperties: &googlesheets.GridProperties{}}}
+	}
+	return f.sheets[title]
+}
+
 func (f *sheetFixture) request(r *http.Request) (*http.Response, error) {
 	path := r.URL.Path
 	var body interface{} = map[string]interface{}{}
@@ -48,20 +60,72 @@ func (f *sheetFixture) request(r *http.Request) (*http.Response, error) {
 		stage = "metadata"
 		tabs := []interface{}{}
 		for _, title := range f.titles {
-			tabs = append(tabs, map[string]interface{}{"properties": map[string]interface{}{"title": title}})
+			tabs = append(tabs, f.sheet(title))
 		}
 		body = map[string]interface{}{"sheets": tabs}
 	case r.Method == "POST" && path == "/v4/spreadsheets/test-id:batchUpdate":
-		stage = "create"
 		var in googlesheets.BatchUpdateSpreadsheetRequest
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			f.t.Fatal(err)
 		}
-		if len(in.Requests) != 1 || in.Requests[0].AddSheet == nil {
-			f.t.Fatal("only AddSheet is permitted")
+		for _, req := range in.Requests {
+			if req.AddSheet != nil {
+				stage = "create"
+				f.creates++
+				title := req.AddSheet.Properties.Title
+				f.titles = append(f.titles, title)
+				body = &googlesheets.BatchUpdateSpreadsheetResponse{Replies: []*googlesheets.Response{{AddSheet: &googlesheets.AddSheetResponse{Properties: f.sheet(title).Properties}}}}
+				continue
+			}
+			var id int64
+			switch {
+			case req.UpdateSheetProperties != nil:
+				id = req.UpdateSheetProperties.Properties.SheetId
+			case req.AddBanding != nil:
+				id = req.AddBanding.BandedRange.Range.SheetId
+			case req.AutoResizeDimensions != nil:
+				id = req.AutoResizeDimensions.Dimensions.SheetId
+			default:
+				f.t.Fatal("unexpected batch request")
+			}
+			var target *googlesheets.Sheet
+			for _, sheet := range f.sheets {
+				if sheet.Properties.SheetId == id {
+					target = sheet
+				}
+			}
+			if target == nil || target.Properties.Title == "Summary" {
+				f.t.Fatal("formatting wrong sheet")
+			}
+			switch {
+			case req.UpdateSheetProperties != nil:
+				stage = "presentation"
+				u := req.UpdateSheetProperties
+				if u.Fields != "gridProperties.frozenRowCount" || u.Properties.GridProperties.FrozenRowCount != 1 || u.Properties.GridProperties.FrozenColumnCount != 0 {
+					f.t.Fatal("unexpected freeze update")
+				}
+				target.Properties.GridProperties.FrozenRowCount = 1
+				f.freezeUpdates++
+			case req.AddBanding != nil:
+				stage = "presentation"
+				band := req.AddBanding.BandedRange
+				if band.Range.StartRowIndex != 0 || band.Range.StartColumnIndex != 0 || band.Range.EndRowIndex != 370 || band.Range.EndColumnIndex != 11 || band.RowProperties == nil {
+					f.t.Fatal("unexpected banding")
+				}
+				target.BandedRanges = append(target.BandedRanges, band)
+				f.bandAdds++
+			case req.AutoResizeDimensions != nil:
+				stage = "resize"
+				if f.updates+f.appends == 0 {
+					f.t.Fatal("resize before successful row write")
+				}
+				d := req.AutoResizeDimensions.Dimensions
+				if d.Dimension != "COLUMNS" || d.StartIndex != 0 || d.EndIndex != 11 {
+					f.t.Fatal("unexpected resize")
+				}
+				f.resizeCalls++
+			}
 		}
-		f.creates++
-		f.titles = append(f.titles, in.Requests[0].AddSheet.Properties.Title)
 	case r.Method == "GET" && strings.HasSuffix(path, "!1:1"):
 		stage = "header"
 		if r.URL.Query().Get("valueRenderOption") != "FORMULA" {
@@ -207,7 +271,7 @@ func TestRepeatedUpsert(t *testing.T) {
 	if err := c.UpsertDay(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
-	if f.creates != 1 || f.headerWrites != 1 || f.appends != 1 || f.updates != 2 || len(f.rows) != 1 {
+	if f.creates != 1 || f.headerWrites != 1 || f.appends != 1 || f.updates != 2 || len(f.rows) != 1 || f.freezeUpdates != 1 || f.bandAdds != 1 || f.resizeCalls != 3 {
 		t.Fatalf("not idempotent: %+v", f)
 	}
 	if f.rows[0][2] != "PTO" || f.rows[0][3] != float64(0) || f.rows[0][4] != float64(1) {
@@ -249,7 +313,7 @@ func TestProjectionValues(t *testing.T) {
 }
 
 func TestProjectionFailures(t *testing.T) {
-	for _, stage := range []string{"metadata", "create", "header", "initialize", "dates", "append", "update"} {
+	for _, stage := range []string{"metadata", "create", "header", "initialize", "dates", "append", "update", "presentation", "resize"} {
 		t.Run(stage, func(t *testing.T) {
 			failure := errors.New("offline failure")
 			f := &sheetFixture{t: t, titles: []string{"Summary", "Daily Log 2026"}, header: dailyHeaders, failStage: stage, failure: failure}

@@ -46,10 +46,14 @@ func (c *Client) UpsertDay(ctx context.Context, record tracker.DayRecord) error 
 		return err
 	}
 	title := yearlyWorksheet(record.Year)
-	if err := c.ensureYearlyWorksheet(ctx, title); err != nil {
+	sheet, err := c.ensureYearlyWorksheet(ctx, title)
+	if err != nil {
 		return err
 	}
 	if err := c.ensureHeaders(ctx, title); err != nil {
+		return err
+	}
+	if err := c.ensurePresentation(ctx, sheet); err != nil {
 		return err
 	}
 	dates, err := c.Service.Spreadsheets.Values.Get(c.SpreadsheetID, "'"+title+"'!A2:A").
@@ -78,27 +82,30 @@ func (c *Client) UpsertDay(ctx context.Context, record tracker.DayRecord) error 
 	if err != nil {
 		return fmt.Errorf("upsert %s in %s: %w", record.Date, title, err)
 	}
-	return nil
+	return c.autoResizeColumns(ctx, sheet.Properties.SheetId)
 }
 
-func (c *Client) ensureYearlyWorksheet(ctx context.Context, title string) error {
-	titles, err := c.worksheetTitles(ctx)
+func (c *Client) ensureYearlyWorksheet(ctx context.Context, title string) (*googlesheets.Sheet, error) {
+	worksheets, err := c.worksheetMetadata(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !titles["Summary"] {
-		return fmt.Errorf("spreadsheet missing required worksheet: Summary")
+	if worksheets["Summary"] == nil {
+		return nil, fmt.Errorf("spreadsheet missing required worksheet: Summary")
 	}
-	if titles[title] {
-		return nil
+	if sheet := worksheets[title]; sheet != nil {
+		return sheet, nil
 	}
-	_, err = c.Service.Spreadsheets.BatchUpdate(c.SpreadsheetID, &googlesheets.BatchUpdateSpreadsheetRequest{
+	out, err := c.Service.Spreadsheets.BatchUpdate(c.SpreadsheetID, &googlesheets.BatchUpdateSpreadsheetRequest{
 		Requests: []*googlesheets.Request{{AddSheet: &googlesheets.AddSheetRequest{Properties: &googlesheets.SheetProperties{Title: title}}}},
-	}).Context(ctx).Do()
+	}).Fields("replies.addSheet.properties").Context(ctx).Do()
 	if err != nil {
-		return fmt.Errorf("create %s: %w", title, err)
+		return nil, fmt.Errorf("create %s: %w", title, err)
 	}
-	return nil
+	if len(out.Replies) != 1 || out.Replies[0] == nil || out.Replies[0].AddSheet == nil || out.Replies[0].AddSheet.Properties == nil {
+		return nil, fmt.Errorf("create %s: missing worksheet properties in response", title)
+	}
+	return &googlesheets.Sheet{Properties: out.Replies[0].AddSheet.Properties}, nil
 }
 
 func (c *Client) ensureHeaders(ctx context.Context, title string) error {

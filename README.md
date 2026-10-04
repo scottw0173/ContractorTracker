@@ -70,6 +70,13 @@ Header order is exactly:
 Date | Day | Status | Work Fraction | PTO Fraction | Weekend | Email Sent At | Responded At | Response Source | Finalized At | Changed
 ```
 
+Yearly Daily Log presentation freezes row 1, preserves existing banding that
+covers A1:K370 (including its colors), and auto-sizes A:K after each successful
+row upsert. Missing banding is added with subdued defaults; yearly color schemes
+need not match. Partial overlapping bands that do not cover A1:K370 require
+manual adjustment and return an error instead of adding overlapping formatting.
+Presentation is not business state, and Summary formatting is untouched.
+
 Blank headers are initialized; nonblank mismatches and duplicate dates fail.
 Repeated invocation updates the same row. Unrelated rows and Summary are not
 rewritten; there is no sorting, full-year reconciliation, or Summary formula setup.

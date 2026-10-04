@@ -198,8 +198,7 @@ Client construction is offline; token acquisition occurs lazily on API use.
 
 ## 2026-10-03 — Incremental Sheets projection
 
-DynamoDB remains authoritative. Stream notifications and manual {year, date}
-events read each day with
+DynamoDB remains authoritative. Stream notifications read each day with
 strongly consistent GetDay and upsert it into Daily Log YYYY. Summary remains
 an existing separate worksheet; the unyearly Daily Log tab is not required.
 Yearly tabs are created on demand. Application-owned headers are initialized
@@ -211,15 +210,15 @@ and zero timestamps become empty cells. Present timestamps use UTC RFC3339Nano.
 Reserved concurrency was removed after the account rejected its reservation
 under the concurrency quota. No replacement reservation or lock is introduced.
 Default stream shard ordering does not serialize all Sheets writers: different
-shards, manual invocations, or external writers can race on tab creation/append
-or project an older read snapshot after a newer one. Manual repair remains
-available. Summary is a separate formula-driven selected-year presentation.
+shards or external writers can race on tab creation/append
+or project an older read snapshot after a newer one. Summary is a separate
+formula-driven selected-year presentation.
 
 SSM credentials are loaded on each invocation and the Google client retains
 only that invocation's context, avoiding expired contexts during token refresh.
 A retry rereads DynamoDB and locates the existing date row, including after an
 ambiguous successful append. A response updated during projection may require
-a later stream notification or manual invocation to refresh the snapshot.
+a later stream notification to refresh the snapshot.
 
 ## 2026-10-03 — Stream notifications reread authoritative state
 
@@ -234,14 +233,14 @@ before any synchronization, then deduplicate per invocation in first-seen order.
 Each unique key runs GetDay -> UpsertDay once, sequentially. There is no
 persistent deduplication state; later invocations reread current state. Errors
 fail the whole batch and use default Lambda stream retry behavior; successful earlier projections can repeat on retry.
-Missing current days remain errors, consistent with the manual path. No DLQ,
+Missing current days remain errors. No DLQ,
 custom retry, batching delay, partial-batch response, or reconciliation is added.
 Stream polling permissions are explicit in SheetSyncFunctionRole: DescribeStream,
 GetRecords, and GetShardIterator on DayTable.StreamArn, and ListStreams on the
 DayTable stream ARN pattern. GetItem remains a separate table-only statement.
 Supplying an explicit role prevents SAM's generated role from attaching the
 broad AWSLambdaDynamoDBExecutionRole policy. The logical ID matches SAM's
-previous generated role. Manual keys remain supported for repair.
+previous generated role.
 
 ## 2026-10-04 — Supported administrative corrections
 
@@ -305,7 +304,7 @@ content, not calculated results. Unexpected nonblank content fails before Summar
 writes. B3 is user-controlled; unrelated cells remain untouched. One batch applies
 narrow value, validation, and formatting changes; repeats only repair differences
 and auto-size columns. Summary follows successful Daily Log upserts, so dashboard
-failures leave authoritative projection rows intact for retry/manual repair.
+failures leave authoritative projection rows intact for stream retry.
 
 ## 2026-10-04 — Missing historical days use administrative backfill
 
@@ -321,9 +320,8 @@ RespondedAt records the current UTC administrative entry time; EmailSentAt and
 FinalizedAt remain zero, and HasBeenChanged starts false. Normal domain rules
 supply fractions and weekend context. Later different-status corrections set
 HasBeenChanged and use normal USER/LATE_USER rules; same-status administrative
-corrections remain no-ops. Successful INSERTs use the existing Stream projection;
-manual SheetSync is still a separate projection-repair path. No infrastructure
-or administrative public endpoint is introduced.
+corrections remain no-ops. Successful INSERTs use the existing Stream projection.
+No infrastructure or administrative public endpoint is introduced.
 
 ## 2026-10-04 — Token-secret SSM retrieval
 
@@ -345,3 +343,21 @@ a future customer-managed KMS key would need narrowly scoped Decrypt/key access.
 Warm environments keep their initialized secret, so this is not a rotation
 protocol. Saved deployment overrides must remove the old TokenSecret setting
 and explicitly select the enabled 6 AM production schedule when updating a stack.
+
+
+## 2026-10-04 — Stream-only projection after production validation
+
+After successful end-to-end production validation, the manual per-date projection
+interface was intentionally removed. SheetSync accepts events.DynamoDBEvent;
+Lambda runtime owns JSON deserialization. Private stream keys retain exact
+year/date validation, whole-batch validation, first-seen deduplication, sequential
+strong GetDay rereads and idempotent UpsertDay. Images are never authoritative.
+Google credentials/client remain lazy and invocation-scoped; empty/REMOVE-only
+batches require neither. The stream is the only configured trigger, and no
+manual function-name output remains.
+
+admin-backfill creates missing authoritative days and admin-correct changes
+existing days; both rely on resulting stream notifications without invoking
+SheetSync. There is no supported direct per-date projection invocation. If a
+legitimate authoritative change cannot repair an inconsistency, an explicit
+future reconciliation/replay mechanism is needed; none is introduced here.

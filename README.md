@@ -5,7 +5,7 @@ non-responses. DynamoDB is authoritative. A scheduled daily Lambda finalizes
 an existing pending yesterday and sends today's SES prompt when needed.
 Signed email links open a read-only confirmation page; an explicit POST
 records the response through conditional DynamoDB updates. Google Sheets projection is driven by DynamoDB Stream notifications,
-with manual per-date repair available.
+and is stream-only.
 
 ## Build and validate
 
@@ -76,14 +76,16 @@ The public Function URL uses `AuthType: NONE`; signed bearer tokens provide
 application authorization. The table is retained on stack deletion or
 replacement, so retained data will require deliberate management later.
 
-## Sheets projection and manual repair
+## Automatic Sheets projection
 
 `SheetSyncFunction` consumes INSERT/MODIFY notifications from DayTable's
 KEYS_ONLY stream. It uses keys to strongly consistently reread current DynamoDB
 state rather than projecting stream images. INSERT/MODIFY keys are validated
 and deduplicated in first-seen order within each invocation before each unique
 key runs GetDay -> UpsertDay. REMOVE notifications are ignored.
-Manual `{year, date}` events remain available for repair/backfill. It decrypts `GCP-Project-Key` from SSM, and upserts the
+The Google client is initialized lazily for the first projection in each
+invocation and reused within that batch. Empty/REMOVE-only batches do not load
+Google credentials. It decrypts `GCP-Project-Key` from SSM, and upserts the
 record into `Daily Log YYYY`, creating the yearly tab if needed. `Summary` must
 already exist. The unyearly `Daily Log` tab is unused. Share the spreadsheet with
 the service account with edit access beforehand. A customer-managed SSM KMS key
@@ -113,34 +115,19 @@ The function uses an explicit role with narrowly scoped inline stream-read
 permissions, separate table GetItem permission, and no managed DynamoDB policy.
 
 Reserved concurrency is absent because the account rejected its reservation.
-Shard ordering is not a global writer lock; concurrent shards/manual invocations
-can race on tab creation or date-row append. Avoid manual invocations during
-active stream processing and concurrent external edits to application-owned
-headers/date rows. Duplicate dates fail explicitly and require manual cleanup.
-Enabling a stream does not backfill records that predate stream enablement;
-manual invocation remains available for those records.
+Shard ordering is not a global writer lock; concurrent shards or external writers
+can race on tab creation or date-row append. Avoid concurrent external edits to
+application-owned headers/date rows. Duplicate dates fail explicitly and require
+cleanup. Enabling a stream does not backfill records that predate stream enablement.
 
-After deployment, choose a date that already exists in DynamoDB. For example:
-
-```json
-{"year":2026,"date":"2026-10-03"}
-```
-
-Use the deployed `SheetSyncFunctionName` output as the function name (replace
-the placeholder below). Use AWS CLI credentials and region for that stack:
-
-```sh
-aws lambda invoke \
-  --function-name '<SheetSyncFunctionName output>' \
-  --invocation-type RequestResponse \
-  --cli-binary-format raw-in-base64-out \
-  --payload '{"year":2026,"date":"2026-10-03"}' \
-  /tmp/contractortracker-sheet-sync-result.json
-cat /tmp/contractortracker-sheet-sync-result.json
-```
-
-Success returns `null`; check that the CLI response has no `FunctionError`.
-Invoking again should update the same date row rather than append another.
+The production DynamoDB Stream → SheetSync → Google Sheets path has been proven
+end-to-end. There is no supported direct per-date SheetSync invocation.
+Normal authoritative INSERT/MODIFY operations trigger projection automatically.
+admin-backfill creates a missing DynamoDB day; admin-correct changes an existing
+day; sheet-sync only projects stream notifications. Neither CLI calls SheetSync.
+If an inconsistency cannot be repaired through a legitimate authoritative change,
+a future explicit reconciliation/replay mechanism is required. No such mechanism
+is implemented here; do not fabricate business changes solely to refresh Sheets.
 
 ## Summary dashboard
 
@@ -185,18 +172,14 @@ unchanged, valid B3 selections are user-controlled, and incompatible nonblank
 content returns an error naming its cell. Unrelated cells are not overwritten.
 Formatting and year validation use narrow, repeat-safe updates. Summary updates
 follow a successful Daily Log write: a Summary failure does not undo that row,
-and manual invocation or stream retry can finish dashboard initialization.
+and stream retry can finish dashboard initialization.
 
-For a safe dashboard regression test, save a copy of the existing workbook and
-inspect the owned cells above for incompatible content before deploying. Invoke SheetSync
-with an existing 2026 DynamoDB date using the command above. Confirm no
-FunctionError, B3=2026, correct formula results (no formula errors), current-date
-status, monthly totals, and sorted PTO dates. Compare headline sums/counts with
-Daily Log 2026, including weekend and late-response records if present. Invoke
-the same date again to verify no duplicate Daily Log row or dashboard content.
-If another annual tab already exists, select 2026 and repeat an ordinary upsert
-for the other year to verify the selection remains 2026. No synthetic business
-records are needed for this test.
+For safe deployment verification, inspect the change set to confirm the existing
+DynamoDB trigger and IAM role remain intact and the manual function-name output
+is removed. After deployment, observe a legitimate status submission or supported
+administrative change. Verify its stream projection updates the same Daily Log
+row and Summary formulas without duplicate rows or content. Do not submit custom
+per-date Lambda payloads or create synthetic business changes for this test.
 
 ## Administrative corrections
 
@@ -235,8 +218,8 @@ the CLI never calls Sheets and needs no Lambda or SAM infrastructure.
 ## Creating missing historical days
 
 Use `cmd/admin-backfill` to create a day that is missing from authoritative
-DynamoDB. Use `admin-correct` to change an existing day; manual SheetSync
-invocation only repairs a projection and does not create authoritative records.
+DynamoDB. Use `admin-correct` to change an existing day; SheetSync is an
+automatic stream-only projection.
 Direct manual construction/editing of DynamoDB business fields is unsupported.
 
 ```sh
@@ -267,8 +250,7 @@ administrative entry time in RespondedAt. EmailSentAt and FinalizedAt remain
 zero; no historical email-response time is invented. Different-status corrections
 later set HasBeenChanged and use normal response-source rules; a same-status
 admin-correct request remains a no-op. The existing DynamoDB Stream automatically
-projects successful backfill INSERTs to Sheets. Manual SheetSync repair remains
-available separately.
+projects successful backfill INSERTs to Sheets.
 
 Once each status is known, set STATUS_2026_10_01, STATUS_2026_10_02, and
 STATUS_2026_10_04 to one of the four allowed values, then run each separately:

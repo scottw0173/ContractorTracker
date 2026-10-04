@@ -96,3 +96,15 @@ func TestProductionScheduleDefaults(t *testing.T) {
 	requireTemplateText(t, templateBlock(t, text, "Parameters", "AppTimezone"), "Default: America/Mazatlan")
 	requireTemplateText(t, templateBlock(t, text, "Resources", "DailyWorkerFunction", "Properties", "Events", "DailySchedule"), "Type: ScheduleV2", "ScheduleExpression: !Ref DailyScheduleExpression", "ScheduleExpressionTimezone: !Ref AppTimezone", "State: !Ref DailyScheduleState")
 }
+
+func TestSheetSyncStreamOnly(t *testing.T) {
+	text := readTemplate(t)
+	events := templateBlock(t, text, "Resources", "SheetSyncFunction", "Properties", "Events")
+	requireTemplateText(t, events, "Type: DynamoDB", "Stream: !GetAtt DayTable.StreamArn", "StartingPosition: TRIM_HORIZON", "BatchSize: 10")
+	if strings.Count(events, "Type:") != 1 {
+		t.Fatal("SheetSync must have exactly one DynamoDB trigger")
+	}
+	if strings.Contains(templateBlock(t, text, "Outputs"), "SheetSyncFunctionName:") {
+		t.Fatal("manual projection output remains")
+	}
+}

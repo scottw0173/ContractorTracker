@@ -93,8 +93,8 @@ There are three Lambda functions. The sheet-sync function consumes DayTable
 KEYS_ONLY stream notifications for inserts and modifications, deduplicates keys
 in first-seen order within each batch, and rereads each day
 with strongly consistent GetDay, and upserts it into Daily Log YYYY. Stream
-images are never projected. Manual {year, date} invocation remains available
-for repairs/backfill. Summary must already exist; there is no full-year reconciliation.
+images are never projected. SheetSync accepts typed DynamoDB events only.
+Summary must already exist; there is no full-year reconciliation.
 
 ## daily-worker
 
@@ -181,7 +181,7 @@ same-status administrative corrections do not write. The existing DynamoDB
 Stream projects successful INSERTs without direct Sheets calls. Use existing
 local AWS credentials; no new configuration, Lambda, or SAM resource is needed.
 Direct manual construction/editing of DynamoDB business fields is unsupported.
-The manual SheetSync repair path remains separate and available.
+SheetSync is automatic stream projection only; neither admin CLI invokes it.
 
 ## Local administrative corrections
 
@@ -469,7 +469,8 @@ Presentation is not business state; Summary has a separate reporting layout.
 
 cmd/sheet-sync validates the positive year and exact matching ISO date before
 using the existing strongly consistent GetDay. It loads credentials and creates
-the Google client per invocation and reuses it across a stream batch. The SAM
+the Google client lazily on first projection per invocation and reuses it across
+a stream batch; empty/REMOVE-only batches load no Google credentials. The SAM
 DynamoDB event uses TRIM_HORIZON and batch size 10 with default per-shard
 parallelization. INSERT/MODIFY keys are all validated before synchronization,
 deduplicated per invocation in first-seen order, and each unique key follows
@@ -480,8 +481,15 @@ is a separate DayTable-only permission; no managed DynamoDB policy is used.
 Errors fail the whole batch; no partial-batch response or custom retry is used.
 No reserved concurrency is configured because this account rejected it under
 its concurrency quota. Default shard ordering is not a global Sheets writer
-lock; concurrent shards/manual invocations can race on tab creation or append.
+lock; concurrent shards or external writers can race on tab creation or append.
 No replacement lock or full-year sync exists.
+
+SheetSync has no supported direct per-date invocation. The production stream
+projection has been proven end-to-end. admin-backfill creates missing authoritative
+days; admin-correct changes existing authoritative days; their writes trigger
+automatic projection. Inconsistencies that cannot be repaired by legitimate
+authoritative changes require a future explicit reconciliation/replay mechanism,
+not custom Lambda events or fabricated business-state changes.
 
 Summary is a formula-driven dashboard for one selected calendar year, not an
 audit log. B3 lists available exact positive four-digit Daily Log YYYY years in

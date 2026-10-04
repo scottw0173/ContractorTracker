@@ -207,6 +207,3 @@ Outputs:
   StatusHandlerFunctionName:
     Description: Function name for later manual testing.
     Value: !Ref StatusHandlerFunction
-  SheetSyncFunctionName:
-    Description: Stream-driven projection with manual per-date repair support.
-    Value: !Ref SheetSyncFunction

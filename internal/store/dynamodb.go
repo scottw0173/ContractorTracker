@@ -92,6 +92,31 @@ func (s *Store) PutDay(ctx context.Context, record tracker.DayRecord) error {
 	return nil
 }
 
+// PutDayIfStatus replaces the complete item only while its stored status matches
+// expectedStatus. A missing item or a changed status returns updated=false.
+func (s *Store) PutDayIfStatus(ctx context.Context, record tracker.DayRecord, expectedStatus tracker.Status) (bool, error) {
+	item, err := marshalDay(record)
+	if err != nil {
+		return false, fmt.Errorf("encode day: %w", err)
+	}
+	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.tableName), Item: item,
+		ConditionExpression:      aws.String("#status = :expected_status"),
+		ExpressionAttributeNames: map[string]string{"#status": "status"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":expected_status": &types.AttributeValueMemberS{Value: string(expectedStatus)},
+		},
+	})
+	var conflict *types.ConditionalCheckFailedException
+	if errors.As(err, &conflict) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("put day if status: %w", err)
+	}
+	return true, nil
+}
+
 // ListYear queries every page of the year partition in ascending date order.
 // Dates must use ISO YYYY-MM-DD so sort-key order is chronological.
 func (s *Store) ListYear(ctx context.Context, year int) ([]tracker.DayRecord, error) {

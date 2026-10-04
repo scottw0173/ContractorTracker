@@ -76,7 +76,9 @@ Responsibilities:
 
 1. Determine today's and yesterday's dates using the configured application timezone.
 2. Load yesterday's record.
-3. If yesterday is still `PENDING`, convert it to `NO_RESPONSE`.
+3. If yesterday exists and is still `PENDING`, convert it to `NO_RESPONSE`
+   using a conditional write requiring the stored status still to be `PENDING`.
+   Leave missing records absent and continue after conditional conflicts.
 4. Synchronize DynamoDB records to Google Sheets.
 5. Ensure today's `PENDING` record exists.
 6. Send today's status email through Amazon SES if an email has not already been sent.

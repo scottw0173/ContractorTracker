@@ -211,3 +211,52 @@ func TestListYearErrorsAndEmpty(t *testing.T) {
 		})
 	}
 }
+
+func TestPutDayIfStatus(t *testing.T) {
+	failure := errors.New("write failed")
+	for _, expected := range []tracker.Status{tracker.StatusPending, tracker.StatusPTO} {
+		for _, tc := range []struct {
+			name    string
+			err     error
+			updated bool
+		}{
+			{"updated", nil, true},
+			{"conflict", &types.ConditionalCheckFailedException{}, false},
+			{"wrapped conflict", fmt.Errorf("SDK: %w", &types.ConditionalCheckFailedException{}), false},
+			{"other error", failure, false},
+		} {
+			t.Run(string(expected)+"/"+tc.name, func(t *testing.T) {
+				record, _ := testDay(t, "2026-10-03")
+				record, err := tracker.FinalizePending(record, time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC))
+				if err != nil {
+					t.Fatal(err)
+				}
+				item, err := marshalDay(record)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := context.WithValue(context.Background(), struct{}{}, "request")
+				client := fakeClient{put: func(gotCtx context.Context, in *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+					if gotCtx != ctx || aws.ToString(in.TableName) != "days" || !reflect.DeepEqual(in.Item, item) {
+						t.Fatal("incorrect complete record write")
+					}
+					if aws.ToString(in.ConditionExpression) != "#status = :expected_status" || !reflect.DeepEqual(in.ExpressionAttributeNames, map[string]string{"#status": "status"}) || !reflect.DeepEqual(in.ExpressionAttributeValues, map[string]types.AttributeValue{":expected_status": &types.AttributeValueMemberS{Value: string(expected)}}) {
+						t.Fatal("incorrect expected-status condition")
+					}
+					return &dynamodb.PutItemOutput{}, tc.err
+				}}
+				updated, err := New(client, "days").PutDayIfStatus(ctx, record, expected)
+				if updated != tc.updated {
+					t.Fatalf("updated = %v", updated)
+				}
+				if tc.err == failure {
+					if !errors.Is(err, failure) {
+						t.Fatalf("error lost: %v", err)
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}

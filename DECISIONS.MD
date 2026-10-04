@@ -35,3 +35,16 @@ does not consume PTO. `NO_RESPONSE` remains unknown and represents neither.
 be totaled and later support partial-day PTO. A PTO selection currently uses
 WorkFraction = 0 and PTOFraction = 1; all other statuses use PTOFraction = 0.
 `HALF_DAY` remains WorkFraction = 0.5 and consumes no PTO.
+
+## 2026-10-03 — Conditional automatic finalization
+
+Automatic `PENDING -> NO_RESPONSE` finalization writes the complete record
+only if DynamoDB's stored status is still `PENDING`. A conditional conflict
+is expected and does not block today's creation. This prevents automatic
+finalization from overwriting a concurrent user response.
+
+## 2026-10-03 — Missing previous-day records
+
+A missing previous-day record represents missing system data, not proof of
+non-response. Only an existing `PENDING` record can become `NO_RESPONSE`;
+the daily runner does not create synthetic records for missing days.

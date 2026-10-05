@@ -97,7 +97,14 @@ Repository Variable AWS_DEPLOY_ROLE_ARN and repository Secrets EMAIL_FROM and
 EMAIL_TO are validated without printing values. Emails are configuration rather
 than credentials, but Secrets provide masking in public Actions logs. They are
 step-level env only during validation/deployment, not job-level configuration.
-No AWS access keys are stored in GitHub.
+No AWS access keys are stored in GitHub. Verification, builds, and OIDC deployment
+from main have succeeded. Third-party Actions use reviewed immutable commit SHAs.
+
+The owner configures main's ruleset externally: changes go through pull requests,
+verify must pass before merge, and force pushes/deletion are blocked. No reviewer
+approval is required for this solo-maintained project. Production deployment
+runs after the merged commit is pushed to main and verification succeeds.
+Repository code does not create or enforce these GitHub settings.
 
 infra/github-actions-bootstrap.yaml is independent of the application stack:
 optional GitHub provider creation/reuse, private retained artifact bucket, OIDC
@@ -108,9 +115,7 @@ CreateEventSourceMapping requires Resource "*" but is function-ARN conditioned.
 No deployment, external setup or repository-settings mutation is implied by
 editing these files; the operator performs bootstrap and Variable/Secrets setup.
 CloudFormation's execution role also needs CreateChangeSet on the exact SAM
-transform ARN because SAM processing runs under that service role. The first
-OIDC attempt proved configuration validation, assumption and CI build, but
-failed specifically at transform processing due to this missing permission.
+transform ARN because SAM processing runs under that service role.
 
 ---
 
@@ -577,7 +582,9 @@ rather than trusting separate query parameters.
 
 Do not build custom logging, metrics, dashboards, alarms, tracing, or notification infrastructure at this stage.
 
-AWS Lambda's normal CloudWatch output is sufficient during initial development.
+v1 uses AWS Lambda's normal CloudWatch output. Failure notifications, explicit
+Sheets reconciliation/replay, and automated dependency/security maintenance are
+deferred v1.1 candidates, not blockers for the proven production workflow.
 
 Add observability only when there is a concrete operational reason.
 

@@ -402,3 +402,19 @@ Job-level email Variables appeared in public Actions logs despite suppressing
 SAM output. EMAIL_FROM/EMAIL_TO now require repository Secrets and are passed
 only to validation/deployment steps so GitHub masks their values. They remain
 configuration rather than credentials; AWS_DEPLOY_ROLE_ARN stays a Variable.
+
+
+## 2026-10-04 — v1 closeout and main-branch operations
+
+The production workflow and GitHub verification/build/OIDC deployment from main
+have succeeded, including resolution of the initial SAM service-role permission
+failure. Third-party Actions are pinned to reviewed immutable commit SHAs so
+moving upstream tags cannot silently change privileged workflow code.
+
+The owner configures main's ruleset externally: pull requests and passing verify
+are required before merge, force pushes and deletion are blocked, and no reviewer
+approval is required for this solo-maintained project. Production deploy runs
+after the merged commit reaches main and verification succeeds; repository code
+does not create or enforce the ruleset. Monitoring, explicit authoritative Sheets
+reconciliation/replay, and automated dependency/security maintenance remain
+intentionally deferred improvements rather than v1 blockers.

@@ -26,7 +26,8 @@ roles and the standard AWS SDK configuration chain supply AWS settings.
 
 ## Production configuration
 
-The full production path has been successfully tested end-to-end. There are
+The full production path has been successfully tested end-to-end. GitHub Actions
+verification, builds, and OIDC deployment from main have also succeeded. There are
 three Lambda binaries plus the local admin-correct/admin-backfill CLIs.
 Use a plain SES-verified EmailFrom mailbox in the stack region and preserve the
 configured production EmailTo recipient. Delivery to a real recipient still
@@ -132,21 +133,21 @@ repo:scottw0173@156988004/ContractorTracker@1403695477:ref:refs/heads/main
 ```
 
 No GitHub environment is attached to the deploy job because it would change that
-subject. Protect main and review workflow/bootstrap changes according to your
-repository policy; this slice does not change repository settings.
+subject. The owner configures the main-branch ruleset externally: changes require
+a pull request and a passing `verify` job before merge; force pushes and deletion
+of main are blocked. No reviewer approval is required for this solo-maintained
+project. The production `deploy` job runs after the merged commit is pushed to
+main and verification succeeds. Repository code does not create or enforce this
+GitHub ruleset. Third-party Actions are pinned to reviewed immutable commit SHAs.
 
 The GitHub role can list/read/write only its artifact bucket/prefix, create/inspect/
 execute/delete change sets for contractor-tracker, use the SAM transform, and pass
 only contractor-tracker-cloudformation-execution to CloudFormation. It cannot
 directly administer Lambda, DynamoDB, or application IAM roles.
 
-The first OIDC deployment proved repository configuration validation, role
-assumption, and CI SAM build work. Change-set creation succeeded, but SAM
-processing failed because the CloudFormation execution role lacked
-CreateChangeSet on the SAM transform ARN. Both deployment roles now have that
-exact transform permission: CloudFormation processes SAM under its service role,
-so permission on the GitHub caller alone is insufficient. Update the independent
-bootstrap stack before retrying deployment; this code does not deploy it.
+Both deployment roles have CreateChangeSet permission on the exact SAM transform
+ARN: CloudFormation processes SAM under its service role, so permission on the
+GitHub caller alone is insufficient.
 
 The CloudFormation execution role manages the three app functions and their URL/
 permissions, the SheetSync stream mapping, the retained day table/stream, the
@@ -369,3 +370,18 @@ go run ./cmd/admin-backfill --table "$TABLE_NAME" --year 2026 --date 2026-10-04 
 
 Review and confirm each preview independently. An unset status or table variable
 fails validation before loading AWS configuration or making storage calls.
+
+## Future work / v1.1 candidates
+
+These are intentionally deferred improvements, not blockers for v1:
+
+- Operational monitoring: CloudWatch alarms or equivalent notifications for
+  meaningful Lambda, Scheduler, and stream projection failures, without relying
+  on manual log inspection.
+- Explicit Sheets reconciliation/replay: reread authoritative DynamoDB records
+  and repair projection state when normal stream retries can no longer repair
+  an inconsistency. Do not restore arbitrary per-date SheetSync invocation or
+  fabricate business changes to refresh Sheets.
+- Dependency/security maintenance: Dependabot or equivalent update PRs,
+  govulncheck or similar Go scanning in CI, and reviewed update PRs for pinned
+  Action SHAs when upstream versions change.

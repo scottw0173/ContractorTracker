@@ -17,6 +17,38 @@ func readDeploymentFile(t *testing.T, name string) string {
 	return string(data)
 }
 
+func TestWorkflowImmutableActionPins(t *testing.T) {
+	text := readDeploymentFile(t, ".github/workflows/ci-deploy.yml")
+	approved := map[string]struct {
+		sha, version string
+		count        int
+	}{
+		"actions/checkout":                      {"d23441a48e516b6c34aea4fa41551a30e30af803", "v6", 2},
+		"actions/setup-go":                      {"924ae3a1cded613372ab5595356fb5720e22ba16", "v6", 2},
+		"aws-actions/setup-sam":                 {"89ddb14d60e682855e3fea4be85b3c56485de310", "v3", 2},
+		"aws-actions/configure-aws-credentials": {"e1253824e5c10ff9df46874f81ed3ec929e19cfd", "v6.3.0", 1},
+	}
+	uses := regexp.MustCompile(`(?m)^\s*- uses:\s+([^@\s]+)@([^\s#]+)\s+# ([^\s]+)\s*$`).FindAllStringSubmatch(text, -1)
+	if len(uses) != strings.Count(text, "uses:") {
+		t.Fatal("every Action reference must include an immutable pin and version comment")
+	}
+	counts := make(map[string]int)
+	for _, use := range uses {
+		pin, ok := approved[use[1]]
+		if !ok || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(use[2]) || use[2] != pin.sha || use[3] != pin.version {
+			t.Fatalf("unapproved Action reference: %s", use[0])
+		}
+		counts[use[1]]++
+	}
+	for action, pin := range approved {
+		if counts[action] != pin.count || strings.Contains(text, action+"@"+pin.version) {
+			t.Errorf("%s must use its approved SHA in every expected occurrence", action)
+		}
+	}
+	// TestWorkflowCredentialBoundary independently enforces that verify has no
+	// AWS access and only verified main pushes can request deployment credentials.
+}
+
 func TestExternalEmailConfiguration(t *testing.T) {
 	text := readTemplate(t)
 	for _, name := range []string{"EmailFrom", "EmailTo"} {
